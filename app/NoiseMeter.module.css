@@ -1,0 +1,235 @@
+/* Fills its parent. All sizes derive from --u, a unit tied to the container's
+   size, so the meter scales with whatever box it is dropped into. */
+.root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  container-type: size;
+}
+
+.panel {
+  /* Wide boxes: number on the left, history on the right. */
+  --u: min(1cqh, 0.42cqw);
+  --quiet: #6b7686;
+  --moderate: #e0a52e;
+  --loud: #f87171;
+
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  padding: calc(var(--u) * 9) calc(var(--u) * 10);
+  border: 1px solid #232a34;
+  border-radius: 6px;
+  background: #10141a;
+  color: #e6e9ef;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'label   trend'
+    'reading trend'
+    'detail  trend';
+  column-gap: calc(var(--u) * 12);
+  row-gap: calc(var(--u) * 2);
+}
+
+.label {
+  grid-area: label;
+  color: #9aa3b2;
+  font-size: max(12px, calc(var(--u) * 11));
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.reading {
+  grid-area: reading;
+  align-self: center;
+  /* Room for three digits so the layout does not move at 100 dB. */
+  min-width: 5.1ch;
+  display: flex;
+  align-items: baseline;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: calc(var(--u) * 44);
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+}
+
+.approx {
+  margin-right: 0.12em;
+  color: #9aa3b2;
+  font-size: 0.55em;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.unit {
+  margin-left: 0.3em;
+  color: #9aa3b2;
+  font-size: 0.4em;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.detail {
+  grid-area: detail;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  color: #9aa3b2;
+  font-size: max(12px, calc(var(--u) * 11));
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: var(--quiet);
+}
+
+.peak {
+  margin-left: 0.4em;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Waiting / error line: takes the place of the number and the chart. */
+.note {
+  grid-column: 1 / -1;
+  grid-row: 2 / -1;
+  align-self: center;
+  margin: 0;
+  color: #9aa3b2;
+  font-size: max(13px, calc(var(--u) * 13));
+  line-height: 1.3;
+}
+
+.trend {
+  grid-area: trend;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: max(3px, calc(var(--u) * 2.5));
+  row-gap: max(3px, calc(var(--u) * 3));
+}
+
+.trend[data-live='false'] {
+  display: none;
+}
+
+.history {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 1px;
+  border-bottom: 1px solid #232a34;
+}
+
+.bar {
+  flex: 0 0 calc((100% - 59px) / 60);
+  min-height: 2px;
+  border-radius: 1px 1px 0 0;
+  background: var(--quiet);
+}
+
+/* Live level, on the same vertical scale as the history bars beside it. */
+.levelTrack {
+  grid-column: 2;
+  grid-row: 1;
+  width: max(4px, calc(var(--u) * 3.5));
+  overflow: hidden;
+  border-radius: 2px;
+  background: #1c222b;
+}
+
+.levelFill {
+  width: 100%;
+  height: 100%;
+  background: var(--quiet);
+  transform: scaleY(0);
+  transform-origin: center bottom;
+}
+
+.bar[data-level='moderate'],
+.dot[data-level='moderate'],
+.levelFill[data-level='moderate'] {
+  background: var(--moderate);
+}
+
+.bar[data-level='loud'],
+.dot[data-level='loud'],
+.levelFill[data-level='loud'] {
+  background: var(--loud);
+}
+
+.axis {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  justify-content: space-between;
+  color: #7c8696;
+  font-size: max(11px, calc(var(--u) * 8));
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Short boxes have no room for the time caption. */
+@container (max-height: 170px) {
+  .axis {
+    display: none;
+  }
+}
+
+/* Square or tall boxes: stack the number above the history. */
+@container (max-aspect-ratio: 16 / 10) {
+  .panel {
+    --u: min(1cqw, 1cqh);
+    padding: calc(var(--u) * 7);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-areas:
+      'label'
+      'reading'
+      'detail'
+      'trend';
+    row-gap: calc(var(--u) * 2.5);
+  }
+
+  .label,
+  .detail {
+    font-size: max(12px, calc(var(--u) * 6.5));
+  }
+
+  .reading {
+    align-self: start;
+    font-size: calc(var(--u) * 26);
+  }
+
+  .note {
+    grid-column: 1;
+    grid-row: 2 / -1;
+    font-size: max(13px, calc(var(--u) * 7.5));
+  }
+
+  .trend {
+    margin-top: calc(var(--u) * 2);
+  }
+
+  .axis {
+    font-size: max(11px, calc(var(--u) * 5));
+  }
+}

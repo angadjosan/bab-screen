@@ -1,0 +1,98 @@
+/* ============================================================================
+   Blockchain at Berkeley — Tailwind v4 theme
+   Tailwind CSS v4+ (CSS-first config). Import once at the top of your stylesheet:
+
+     @import "tailwindcss";
+     @import "./tailwind.css";           (this file)
+
+   Then use tokenized utilities directly, e.g.:
+     bg-bab-black  text-bab-gold  font-display  text-display-xl  tracking-bab
+     border-bab-line  p-pad  gap-row  rounded-bab
+
+   This mirrors references/brand.css exactly — same values, Tailwind-native.
+   ========================================================================== */
+
+@theme {
+  /* ---- Colors → bg-*, text-*, border-*, etc. ---- */
+  --color-bab-black:       #0C0C0C;   /* shipped canvas; Figma spec #0A0A0A */
+  --color-bab-black-alt:   #0A0A0A;
+  --color-bab-black-true:  #000000;
+  --color-bab-surface-1:   #111111;
+  --color-bab-surface-2:   #1B1B1B;
+  --color-bab-line:        #2A2A2A;
+  --color-bab-line-soft:   rgba(42, 42, 42, 0.65);
+  --color-bab-line-lit:    #3B3B3B;
+
+  --color-bab-white:       #FFFFFF;
+  --color-bab-dim:         rgba(255, 255, 255, 0.70);
+  --color-bab-mute:        rgba(255, 255, 255, 0.50);
+  --color-bab-faint:       rgba(255, 255, 255, 0.30);
+
+  --color-bab-gold:        #FECB33;   /* shipped brand gold (logo, "Apply") */
+  --color-bab-gold-sub:    #F8BE34;   /* "AT BERKELEY" subtitle gold        */
+  --color-bab-gold-deep:   #EAA536;   /* shaded logo face / pressed         */
+  --color-bab-gold-cal:    #FDB515;   /* official Berkeley California Gold   */
+  --color-bab-wordmark-dark:  #E5E5E5; /* "BLOCKCHAIN" on dark canvas  */
+  --color-bab-wordmark-light: #3D3D3D; /* "BLOCKCHAIN" on light canvas */
+  --color-bab-gold-warm:   #F4B320;
+  --color-bab-gold-hot:    #FAE42C;
+  --color-bab-amber-deep:  #A43E04;
+  --color-bab-blue:        #003262;
+
+  /* ---- Fonts → font-display, font-sans, font-mono ---- */
+  --font-display: "EB Garamond", Georgia, "Times New Roman", serif;
+  --font-sans:    "Instrument Sans", -apple-system, "Segoe UI", Helvetica, sans-serif;
+  --font-mono:    "DM Mono", "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* ---- Font sizes → text-display-xl … text-label (with default line-height) ---- */
+  --text-display-xl:            clamp(3.5rem, 9.5vw, 9rem);
+  --text-display-xl--line-height: 0.81;
+  --text-display-l:             clamp(3rem, 6.4vw, 6rem);
+  --text-display-l--line-height:  0.86;
+  --text-display-m:             clamp(2.25rem, 4.2vw, 4rem);
+  --text-display-m--line-height:  0.92;
+  --text-display-s:             clamp(1.75rem, 2.6vw, 2.5rem);
+  --text-display-s--line-height:  1.0;
+  --text-lead:                  clamp(1.2rem, 1.5vw, 1.44rem);
+  --text-lead--line-height:       1.4;
+  --text-body:                  1rem;
+  --text-body--line-height:       1.5;
+  --text-small:                 0.875rem;
+  --text-small--line-height:      1.45;
+  --text-label:                 0.75rem;
+  --text-label--line-height:      1;
+  --text-micro:                 0.6875rem;
+  --text-micro--line-height:      1;
+
+  /* ---- Letter-spacing → tracking-bab (the -3% fingerprint) ---- */
+  --tracking-bab: -0.03em;
+
+  /* ---- Spacing → p-pad, gap-row, m-margin, etc. ---- */
+  --spacing-pad:    31px;
+  --spacing-row:    46px;
+  --spacing-margin: 69px;          /* use with clamp in layout: px-[clamp(20px,5vw,69px)] */
+  --spacing-cell:   224px;         /* the source footer cell height */
+
+  /* ---- Radius (sharp) → rounded-bab ---- */
+  --radius-bab: 0px;
+
+  /* ---- Easing / timing → ease-bab, duration-fast/slow ---- */
+  --ease-bab: cubic-bezier(0.2, 0.6, 0, 1);
+  --animate-duration-fast: 150ms;
+  --animate-duration-slow: 480ms;
+
+  /* ---- Container width ---- */
+  --width-bab: 1374px;             /* max-w-bab */
+}
+
+/* Base defaults so the brand holds even on unstyled elements. */
+@layer base {
+  html { background: var(--color-bab-black); }
+  body {
+    color: var(--color-bab-white);
+    font-family: var(--font-sans);
+    letter-spacing: var(--tracking-bab);
+  }
+  ::selection { background: var(--color-bab-gold); color: var(--color-bab-black); }
+  *:focus-visible { outline: 2px solid var(--color-bab-gold); outline-offset: 2px; }
+}

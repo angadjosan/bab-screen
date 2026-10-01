@@ -1,0 +1,306 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #0b0e13;
+  --ink: #e6e9ef;
+  --muted: #9aa3b2;
+  --faint: #7c8696;
+  --line: #232a34;
+  --line-strong: #343d4a;
+  --up: #34d399;
+  --down: #f87171;
+  --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --sans: 'IBM Plex Sans', Arial, sans-serif;
+  --fit: 1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+p {
+  margin: 0;
+}
+
+/* Fixed 1920x1080 stage, scaled to the window by --fit (set in page.tsx). */
+.dashboard {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1080px;
+  transform: translate(-50%, -50%) scale(var(--fit));
+  overflow: hidden;
+  background: var(--bg);
+  padding: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 496px;
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: 48px;
+  row-gap: 32px;
+}
+
+/* Bitcoin price */
+.price {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  font: 500 168px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.04em;
+  white-space: nowrap;
+}
+
+.price-pending {
+  color: var(--muted);
+  font: 400 64px/168px var(--sans);
+  letter-spacing: 0;
+}
+
+/* Candle chart */
+.chart-wrap,
+.chart-empty {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chart-wrap {
+  position: relative;
+  padding: 0 120px 44px 0;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.candle-up {
+  stroke: var(--up);
+  fill: var(--up);
+}
+
+.candle-down {
+  stroke: var(--down);
+  fill: var(--down);
+}
+
+.chart-y-labels,
+.chart-x-labels {
+  position: absolute;
+  color: var(--faint);
+  font: 400 20px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-y-labels {
+  top: 0;
+  right: 0;
+  bottom: 44px;
+  width: 104px;
+}
+
+.chart-y-labels span {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+}
+
+.chart-x-labels {
+  left: 0;
+  right: 120px;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+}
+
+.chart-empty {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 28px;
+}
+
+/* Spotted, bottom right */
+.spot-card {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.spot-image-frame {
+  position: relative;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #10141a;
+}
+
+.spot-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity .6s ease;
+}
+
+.spot-image.is-active {
+  opacity: 1;
+}
+
+.spot-image-frame .spot-empty {
+  position: absolute;
+  inset: 0;
+  border: 0;
+}
+
+/* One segment per photo: shown ones are filled, the current one fills as its time runs out. */
+.spot-steps {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  height: 6px;
+}
+
+.spot-step {
+  flex: 1;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+
+.spot-step.is-done {
+  background: var(--ink);
+}
+
+.spot-step-fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform-origin: left;
+  animation: spot-step-fill linear both;
+}
+
+@keyframes spot-step-fill {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Every caption shares one grid cell, so the block is as tall as the tallest and never shifts between photos. */
+.spot-caption {
+  flex: none;
+  display: grid;
+}
+
+.spot-caption-item {
+  grid-area: 1 / 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity .3s ease;
+}
+
+.spot-caption-item.is-active {
+  opacity: 1;
+  transition-delay: .3s;
+}
+
+.spot-names,
+.spot-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.spot-names {
+  font-size: 40px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.spot-text {
+  font-size: 22px;
+  line-height: 1.3;
+}
+
+.spot-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.spot-by {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spot-time {
+  flex: none;
+  font: 400 20px/1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spot-image,
+  .spot-caption-item,
+  .spot-caption-item.is-active {
+    transition: none;
+  }
+}
+
+.spot-empty {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 28px;
+}

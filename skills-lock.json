@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "blockchain-at-berkeley-brand": {
+      "source": "BerkeleyBlockchain/design-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "90a6df91aa4750dc89fb31c9ed8fcc6dfc463e99365621da76f885128bc5dc93"
+    }
+  }
+}

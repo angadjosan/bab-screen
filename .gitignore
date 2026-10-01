@@ -1,0 +1,29 @@
+# dependencies
+node_modules
+
+# build output
+.next
+out
+*.tsbuildinfo
+next-env.d.ts
+
+# env files (never commit secrets)
+.env*
+!.env.example
+
+# keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+
+# deploy / tooling
+.vercel
+
+# OS / logs
+.DS_Store
+*.log

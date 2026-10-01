@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blockchain at Berkeley — brand reference</title>
+<!--
+  REFERENCE PAGE. This proves the B@B system end-to-end: ledger frame, hash-field
+  hero, giant Garamond statement, bordered cell grid, gold stats, footer.
+  Read it to see the parts working together — do NOT clone it. Build a new
+  composition from the same DNA (see SKILL.md).
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=EB+Garamond:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../references/brand.css">
+<style>
+  /* Page-specific composition only — identity comes from brand.css. */
+  .nav { border-bottom: 1px solid var(--bab-line-soft); position: sticky; top: 0; background: rgba(10,10,10,0.8); backdrop-filter: blur(8px); z-index: 10; }
+  .nav-inner { display:flex; align-items:center; justify-content:space-between; height:72px; }
+  .nav-links { display:flex; gap:32px; align-items:center; }
+  .hero { position:relative; padding: clamp(72px,11vw,150px) var(--bab-pad); overflow:hidden; }
+  .hero-content { position:relative; z-index:1; }
+  .hero h1 { margin:0; max-width: 15ch; }
+  .cells-3 { grid-template-columns: repeat(3, 1fr); }
+  .cell-tall { min-height: 260px; display:flex; flex-direction:column; justify-content:space-between; }
+  .section-pad { padding: clamp(72px,10vw,138px) var(--bab-pad); }
+  @media (max-width:720px){ .cells-3, .nav-links { } .nav-links a:not(.bab-btn){ display:none; } }
+</style>
+</head>
+<body>
+
+<!-- ---------- NAV ---------- -->
+<header class="nav">
+  <div class="bab-container nav-inner">
+    <a href="#" aria-label="Blockchain at Berkeley" style="display:flex; height:34px;">
+      <img src="../assets/blockchain_icon.svg" alt="" style="height:100%; width:auto;">
+    </a>
+    <nav class="nav-links">
+      <a class="bab-label" href="#work" style="text-decoration:none;">Work</a>
+      <a class="bab-label" href="#research" style="text-decoration:none;">Research</a>
+      <a class="bab-label" href="#stats" style="text-decoration:none;">Impact</a>
+      <a class="bab-small bab-gold" href="#apply" style="text-decoration:none; text-transform:uppercase;">Apply →</a>
+    </nav>
+  </div>
+</header>
+
+<main class="bab-container">
+  <div class="bab-frame">
+
+    <!-- ---------- HERO ---------- -->
+    <section class="hero">
+      <div class="bab-hashfield" aria-hidden="true"></div>
+      <div class="hero-content">
+        <span class="bab-eyebrow">Berkeley, CA · Est. 2016</span>
+        <h1 class="bab-display-xl">The future is on chain.</h1>
+        <p class="bab-lead bab-dim" style="max-width:54ch; margin-top:var(--bab-row);">
+          We're Berkeley's blockchain engineering, research, and education group.
+          Our members have shipped for Samsung and Arbitrum, modeled consensus
+          attacks for Ripple, and built the course PayPal ran as internal training.
+        </p>
+        <div style="display:flex; flex-direction:column; max-width:300px; margin-top:var(--bab-row);">
+          <a class="bab-btn" href="#apply">Apply to join</a>
+          <a class="bab-btn bab-btn-ghost" href="#work">See case studies</a>
+        </div>
+      </div>
+    </section>
+
+    <hr class="bab-rule">
+
+    <!-- ---------- STATEMENT ---------- -->
+    <section class="section-pad">
+      <span class="bab-eyebrow">What we do</span>
+      <p class="bab-display-l" style="max-width:20ch; margin:0;">
+        A research lab that ships. On-chain, but rigorous.
+      </p>
+    </section>
+
+    <!-- ---------- CELL GRID ---------- -->
+    <div class="bab-cells cells-3" id="work" style="border-top:1px solid var(--bab-line-soft);">
+      <article class="bab-cell cell-tall">
+        <span class="bab-index">01</span>
+        <div>
+          <h3 class="bab-display-s" style="margin:0 0 12px;">Consulting</h3>
+          <p class="bab-small">Production engineering and prototype research for teams shipping real protocols.</p>
+        </div>
+      </article>
+      <article class="bab-cell cell-tall">
+        <span class="bab-index">02</span>
+        <div>
+          <h3 class="bab-display-s" style="margin:0 0 12px;">Research</h3>
+          <p class="bab-small">Consensus and cryptography, held to the standard we'd defend in a Berkeley seminar.</p>
+        </div>
+      </article>
+      <article class="bab-cell cell-tall">
+        <span class="bab-index">03</span>
+        <div>
+          <h3 class="bab-display-s" style="margin:0 0 12px;">Education</h3>
+          <p class="bab-small">Student-led courses and curricula, taught to thousands across the university.</p>
+        </div>
+      </article>
+    </div>
+
+    <!-- ---------- STATS (earned gold) ---------- -->
+    <div class="bab-cells cells-3" id="stats" style="border-top:1px solid var(--bab-line-soft);">
+      <div class="bab-cell">
+        <div class="bab-stat">2016</div>
+        <div class="bab-stat-label">Founded</div>
+      </div>
+      <div class="bab-cell">
+        <div class="bab-stat">40<span class="bab-gold">+</span></div>
+        <div class="bab-stat-label">Protocols shipped</div>
+      </div>
+      <div class="bab-cell">
+        <div class="bab-stat">5,000+</div>
+        <div class="bab-stat-label">Students taught</div>
+      </div>
+    </div>
+
+    <hr class="bab-rule">
+
+    <!-- ---------- PULL QUOTE ---------- -->
+    <section class="section-pad" id="research">
+      <p class="bab-display-m" style="max-width:24ch; margin:0;">
+        We're looking for the next thing to build.
+      </p>
+      <div class="bab-label" style="margin-top:var(--bab-row);">
+        0xF4B3…0A0A · <span class="bab-gold">● Applications open</span>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- ---------- FOOTER ---------- -->
+<footer class="bab-container" id="apply">
+  <div class="bab-frame" style="position:relative;">
+    <div class="bab-hashfield" aria-hidden="true" style="opacity:0.5;"></div>
+    <div class="bab-cells cells-3" style="position:relative;">
+      <div class="bab-cell" style="min-height:224px;">
+        <div class="bab-label" style="margin-bottom:32px;">Sections</div>
+        <nav style="display:flex; flex-direction:column; gap:18px;">
+          <a class="bab-link" href="#">Home</a><a class="bab-link" href="#">About</a><a class="bab-link" href="#">Apply</a>
+        </nav>
+      </div>
+      <div class="bab-cell" style="min-height:224px;">
+        <div class="bab-label" style="margin-bottom:32px;">Contact</div>
+        <nav style="display:flex; flex-direction:column; gap:18px;">
+          <a class="bab-link" href="#">Email</a><a class="bab-link" href="#">GitHub</a><a class="bab-link" href="#">X / Twitter</a>
+        </nav>
+      </div>
+      <div class="bab-cell" style="min-height:224px;">
+        <div class="bab-label" style="margin-bottom:32px;">Terms</div>
+        <nav style="display:flex; flex-direction:column; gap:18px;">
+          <a class="bab-link" href="#">Privacy</a><a class="bab-link" href="#">Code of conduct</a>
+        </nav>
+      </div>
+    </div>
+    <div style="position:relative; padding: 40px var(--bab-pad);">
+      <p class="bab-display-l" style="margin:0;">Let's build.</p>
+      <div class="bab-label" style="margin-top:24px;">Blockchain at Berkeley · Berkeley, CA · Est. 2016</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Hash-field texture — see references/motifs.md. Sparse gold glints, freezes for reduced-motion.
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const hex = '0123456789abcdef';
+  function fill(el) {
+    const cw = el.offsetWidth, ch = el.offsetHeight;
+    if (!cw || !ch) return;
+    const cols = Math.ceil(cw / 7.6), rows = Math.ceil(ch / 16);
+    let out = '';
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const ch2 = hex[(Math.random() * 16) | 0];
+        const roll = Math.random();
+        out += roll < 0.004 ? '<i>' + ch2 + '</i>' : roll < 0.025 ? '<b>' + ch2 + '</b>' : ch2;
+      }
+      out += '\n';
+    }
+    el.innerHTML = out;
+  }
+  const fields = document.querySelectorAll('.bab-hashfield');
+  const run = () => fields.forEach(fill);
+  // Run after layout + fonts so cell dimensions are final.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(run);
+  window.addEventListener('load', run);
+  run();
+  let t; window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(run, 150); });
+})();
+</script>
+</body>
+</html>
