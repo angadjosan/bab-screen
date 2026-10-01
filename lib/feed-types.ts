@@ -50,3 +50,36 @@ export type FeedResponse = {
   agentModel: string | null;
   message?: string;
 };
+
+/**
+ * A token that is in the news, with the note shown beside it. Served by GET /api/newsworthy.
+ * Everything but `summary` is taken from fixed lists (the token universe and the feed sources);
+ * `summary` is written by a model and checked in lib/newsworthy.ts before it gets here.
+ */
+export type NewsworthyToken = {
+  symbol: string;
+  name: string;
+  /** Where its price is read: Hyperliquid's perpetual market, or Gate's spot market. */
+  venue: "hyperliquid" | "gate";
+  /** The market's id at that venue, e.g. "LINK", "kPEPE" or "ABC_USDT". */
+  market: string;
+  /** Tokens per contract at the venue (1,000 for Hyperliquid's "k" markets, otherwise 1). */
+  lot: number;
+  /** One or two plain-text sentences. */
+  summary: string;
+  /** The outlets whose reports the summary is drawn from. */
+  outlets: string[];
+  /** ISO 8601: when the newest of those reports was published. */
+  newestAt: string;
+};
+
+export type NewsworthyResponse = {
+  /** "off": no agent is configured, so there is nothing to show. "error": the list could not be made lately. */
+  status: "ok" | "empty" | "off" | "error";
+  tokens: NewsworthyToken[];
+  /** When the list was last made or confirmed. */
+  updatedAt: string | null;
+  agent: FeedAgentName | null;
+  agentModel: string | null;
+  message?: string;
+};

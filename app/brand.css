@@ -39,8 +39,8 @@
 
   /*
    * Type. One mono per project: DM Mono (the Figma label face) is used for every mono string here.
-   * The brand sets big numbers in Instrument Sans Light (300), but the family starts at 400 (Regular), so the
-   * price is set in the Regular.
+   * The brand sets big numbers in Instrument Sans Light (300), but the family starts at 400 (Regular). The
+   * featured market's price departs from that on purpose: it is set in EB Garamond, the face of the name beside it.
    */
   --bab-display: "EB Garamond", Georgia, "Times New Roman", serif;
   --bab-sans: "Instrument Sans", -apple-system, "Segoe UI", Helvetica, sans-serif;

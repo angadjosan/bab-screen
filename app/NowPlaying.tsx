@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { JamView } from "../lib/jam";
 import type { NowPlaying as NowPlayingData } from "../lib/now-playing";
 
 const POLL_MS = 4_000;
@@ -8,11 +9,59 @@ const REQUEST_TIMEOUT_MS = 8_000;
 // How long the last known track stays up while /api/now-playing is failing.
 const KEEP_LAST_MS = 20_000;
 const BAR_TICK_MS = 500;
+// A showing with less than this left is not worth putting up (the last poll of a minute).
+const JAM_MIN_LEFT_MS = 500;
+// Side of the white square behind the Jam QR: the tile's height while the QR is up (.now-playing.is-jam in globals.css).
+const JAM_QR_BOX_PX = 300;
+
+type Reply = NowPlayingData & { jam?: JamView | null };
+// endsAt is on this page's performance clock, so the tile goes back on time whatever the polls do.
+type Jam = { view: JamView; endsAt: number };
+
+/**
+ * The Jam invite link as a QR code, shown in place of the song for a minute after someone asks for it in Slack.
+ * A plain function, not a component: its <section> then takes the place of the song's in the same DOM element,
+ * so the tile's height eases between 120px and 300px (and the column below follows) instead of snapping.
+ */
+function jamTile(jam: Jam) {
+  const { view } = jam;
+  if (!view.qr) {
+    return (
+      <section className="now-playing is-empty" aria-label="Spotify Jam">
+        <p className="now-playing-note">No Jam link yet. Set one in Slack: @bot jam &lt;Jam invite link&gt;</p>
+      </section>
+    );
+  }
+  // A whole number of screen pixels per module, so every edge lands on a pixel boundary of the 1920x1080 stage.
+  const side = Math.max(1, Math.floor(JAM_QR_BOX_PX / view.qr.modules)) * view.qr.modules;
+  // Placed by whole pixels too: centring an odd leftover would put the code on half pixels.
+  const inset = Math.max(0, Math.floor((JAM_QR_BOX_PX - side) / 2));
+  // The bar empties over what is left of the minute. Fixed when this showing first arrived, so later polls do not restart it.
+  const drain = { "--jam-from": (view.remainingMs / view.totalMs).toFixed(4), animationDuration: `${Math.round(view.remainingMs)}ms` } as CSSProperties;
+  return (
+    <section className="now-playing is-jam" aria-label="Spotify Jam">
+      <div className="jam-qr">
+        <svg viewBox={`0 0 ${view.qr.modules} ${view.qr.modules}`} width={side} height={side} style={{ margin: inset }} shapeRendering="crispEdges" role="img" aria-label="QR code of the Jam invite link">
+          <path d={view.qr.path} />
+        </svg>
+      </div>
+      <div className="jam-body">
+        <p className="jam-eyebrow">Spotify Jam</p>
+        <p className="jam-title">Scan to join the Jam</p>
+        <p className="jam-hint">Add songs from your phone</p>
+        <div className="now-playing-bar" aria-hidden="true">
+          <span key={view.until} className="jam-drain" style={drain} />
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function NowPlaying() {
   // null until the first reply; "idle" when there is nothing to show.
   const [data, setData] = useState<NowPlayingData | "idle" | null>(null);
   const [badArtwork, setBadArtwork] = useState<string | null>(null);
+  const [jam, setJam] = useState<Jam | null>(null);
   // Position at the last poll and when (performance clock) it was received; the bar runs forward from here.
   const anchor = useRef({ positionMs: 0, at: 0 });
   const fill = useRef<HTMLSpanElement>(null);
@@ -29,11 +78,20 @@ export function NowPlaying() {
       try {
         const response = await fetch("/api/now-playing", { cache: "no-store", signal: request.signal });
         if (!response.ok) throw new Error("Now playing request failed");
-        const next = (await response.json()) as NowPlayingData;
+        const next = (await response.json()) as Reply;
         if (!alive) return;
         lastOk = performance.now();
         anchor.current = { positionMs: next.positionMs ?? 0, at: lastOk };
         setData(next);
+        const view = next.jam && next.jam.remainingMs > JAM_MIN_LEFT_MS ? next.jam : null;
+        // Later polls of the same showing keep the first one's object and deadline.
+        setJam((current) =>
+          view
+            ? current && current.view.until === view.until && current.view.url === view.url
+              ? current
+              : { view, endsAt: lastOk + view.remainingMs }
+            : null,
+        );
       } catch {
         if (!alive) return;
         if (performance.now() - lastOk > KEEP_LAST_MS) setData("idle");
@@ -50,6 +108,17 @@ export function NowPlaying() {
       request?.abort();
     };
   }, []);
+
+  // The QR comes down at its deadline even if no poll gets through to say so.
+  const jamEndsAt = jam?.endsAt ?? null;
+  useEffect(() => {
+    if (jamEndsAt === null) return;
+    const timer = window.setTimeout(
+      () => setJam((current) => (current?.endsAt === jamEndsAt ? null : current)),
+      Math.max(0, jamEndsAt - performance.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [jamEndsAt]);
 
   const track = data && data !== "idle" && (data.status === "playing" || data.status === "paused") && data.title ? data : null;
   const playing = track?.status === "playing";
@@ -69,7 +138,9 @@ export function NowPlaying() {
     if (!playing) return;
     const ticker = window.setInterval(paint, BAR_TICK_MS);
     return () => window.clearInterval(ticker);
-  }, [data, playing, durationMs, trackId]);
+  }, [data, playing, durationMs, trackId, jam]);
+
+  if (jam) return jamTile(jam);
 
   if (!track) {
     const message =

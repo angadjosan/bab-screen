@@ -1,7 +1,7 @@
 // Spotify client for song requests: link parsing, OAuth (Authorization Code flow), token refresh,
 // track lookup, "add to playlist" and "add to queue". The Web API is the only way to do either; the
 // macOS app's AppleScript dictionary has play/pause/next/play track but no queue or playlist
-// command, and Spotify exposes no API at all for Jams.
+// command, and Spotify exposes no API at all for Jams (lib/jam.ts only shows a Jam's invite link as a QR code).
 //
 // Needs a Spotify developer app (SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET) and a one-time login at
 // /api/spotify/login. Queueing requires Spotify Premium and an active device; playlists do not.

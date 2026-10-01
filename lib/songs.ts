@@ -1,10 +1,12 @@
 // Song requests: reads new messages from a Slack channel and adds every Spotify track link in
 // them to the playback queue (default) and/or a playlist of the connected Spotify account.
-// Messages without a track link are ignored.
+// Messages without a track link are ignored. A message that mentions the bot with the word "jam"
+// is not a song request: it puts the Jam QR on the screen for a minute (lib/jam.ts).
 //
 // syncSongs() is the single entry point. It is idempotent (a persisted cursor means a message is
 // only ever handled once, across restarts too), safe to call concurrently, and never throws.
 
+import { getJamStatus, looksLikeJamTrigger, parseJamTrigger, recordJamTrigger, type JamStatus } from "./jam";
 import { resolveUserName } from "./slack-users";
 import { readJson, writeJson } from "./songs-store";
 import {
@@ -157,6 +159,8 @@ export type SongsStatus = {
     help: string | null;
   };
   loop: { running: boolean; everySeconds: number };
+  /** The Jam invite link the QR would show, where it came from, and whether the QR is up. */
+  jam: JamStatus;
   lastSyncAt: string | null;
   pending: Array<{
     id: string;
@@ -186,6 +190,8 @@ type Runtime = {
   spotifyHelp: string | null;
   seedRetryAt: number;
   premiumLogged?: boolean;
+  /** The bot's own Slack user ID, from auth.test, and the token it was asked with. */
+  botUser?: { token: string; id: string };
 };
 const globalStore = globalThis as typeof globalThis & { __babSongs?: Runtime };
 const runtime: Runtime = (globalStore.__babSongs ??= {
@@ -376,7 +382,31 @@ function isCandidate(message: SlackMessage): message is SlackMessage & { ts: str
   return Boolean(message.text?.trim());
 }
 
-/** Turns track links in messages newer than the cursor into pending requests. Returns false when Slack could not be read. */
+/**
+ * The bot's own Slack user ID, which is what an @-mention of it looks like in message text. Asked
+ * once per process (auth.test needs no scope). Throws on a passing failure so the caller can come
+ * back to the message; returns null when Slack will not say, and the message is then handled as
+ * any other.
+ */
+async function botUserId(): Promise<string | null> {
+  const token = process.env.SLACK_BOT_TOKEN ?? "";
+  if (runtime.botUser?.token === token) return runtime.botUser.id;
+  try {
+    const payload = await slackCall<{ user_id?: string }>("auth.test", {});
+    if (!payload.user_id) return null;
+    runtime.botUser = { token, id: payload.user_id };
+    return payload.user_id;
+  } catch (error) {
+    const code = error instanceof SlackError ? error.code : "unknown";
+    if (code === "timeout" || code === "network_error" || code === "rate_limited" || code.startsWith("http_5")) throw error;
+    return null;
+  }
+}
+
+/**
+ * Turns track links in messages newer than the cursor into pending requests, and acts on requests
+ * for the Jam QR. Returns false when Slack could not be read.
+ */
 async function pollSlack(state: SongsState, channel: string): Promise<boolean> {
   if (Date.now() < runtime.slackRetryAt) return false;
   try {
@@ -397,8 +427,16 @@ async function pollSlack(state: SongsState, channel: string): Promise<boolean> {
         .sort((a, b) => compareTs(a.ts, b.ts));
 
       for (const message of fresh) {
+        // Asked before the cursor moves: if Slack cannot be reached, the next poll starts at this message again.
+        const jam =
+          isCandidate(message) && looksLikeJamTrigger(message.text) ? parseJamTrigger(message.text, await botUserId()) : null;
         state.cursor = message.ts;
         if (!isCandidate(message)) continue;
+        if (jam) {
+          // Never a song request as well: a Jam invite can be a spotify.link short link, which findTrackLinks would pick up.
+          await recordJamTrigger({ link: jam.link, postedAtMs: Number(message.ts) * 1000, user: message.user });
+          continue;
+        }
         if (state.pending.some((request) => request.ts === message.ts) || state.log.some((result) => result.id.split("#")[0] === message.ts)) {
           continue;
         }
@@ -993,6 +1031,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       help: spotifyHelpText,
     },
     loop: { running: Boolean(runtime.timer), everySeconds },
+    jam: await getJamStatus(),
     lastSyncAt: state.lastSyncAt,
     pending: state.pending.map((request) => ({
       id: request.id,

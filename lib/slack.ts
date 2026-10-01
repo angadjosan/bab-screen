@@ -8,18 +8,23 @@ export const MAX_SPOTS = 6;
 // The dashboard frame is roughly 900x1000 device pixels, so ~1024px on the long edge is plenty.
 const PREFERRED_THUMBNAILS = ["thumb_1024", "thumb_960", "thumb_800"] as const;
 
-type SlackFile = {
+export type SlackFile = {
   id?: string;
   mimetype?: string;
   filetype?: string;
+  /** "hosted" for an upload; "tombstone" / "hidden_by_limit" when the content is gone. */
+  mode?: string;
   url_private?: string;
   thumb_1024?: string;
   thumb_960?: string;
   thumb_800?: string;
 };
 
-type SlackMessage = {
+export type SlackMessage = {
   ts?: string;
+  /** Set on replies (and on a thread's parent, where it equals ts). */
+  thread_ts?: string;
+  subtype?: string;
   text?: string;
   user?: string;
   bot_id?: string;
@@ -74,13 +79,13 @@ function emptyFields() {
   };
 }
 
-class SlackApiError extends Error {
+export class SlackApiError extends Error {
   constructor(public readonly code: string) {
     super(`Slack API error: ${code}`);
   }
 }
 
-async function slackGet<T>(method: string, params: Record<string, string>): Promise<T> {
+export async function slackGet<T>(method: string, params: Record<string, string>): Promise<T> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) throw new SlackApiError("token_missing");
 
@@ -99,14 +104,18 @@ async function slackGet<T>(method: string, params: Record<string, string>): Prom
   return payload;
 }
 
-function imageFile(message: SlackMessage): SlackFile | undefined {
-  const files = message.files ?? [];
-  const image = files.find(
-    (file) =>
-      file.id &&
+/** An uploaded file that is a picture (not a video, a document, ...). */
+export function isImageFile(file: SlackFile): boolean {
+  return Boolean(
+    file.id &&
       (file.mimetype?.startsWith("image/") ||
         ["png", "jpg", "jpeg", "gif", "webp", "heic"].includes(file.filetype ?? "")),
   );
+}
+
+function imageFile(message: SlackMessage): SlackFile | undefined {
+  const files = message.files ?? [];
+  const image = files.find(isImageFile);
   if (image) return image;
 
   // Image blocks can reference a Slack file without listing it in message.files.

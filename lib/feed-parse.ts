@@ -440,6 +440,8 @@ export type Clustered<T> = {
   item: T;
   /** How many different sources carried this story, the kept item's included. */
   outlets: number;
+  /** Those sources' names, earliest report first. */
+  sources: string[];
 };
 
 /** Groups repeats of one story across outlets (same link or matching headlines) and keeps one version of each. */
@@ -464,7 +466,8 @@ export function cluster<T extends FeedItem>(items: T[]): Clustered<T>[] {
   return stories.map((members) => {
     // Show the earliest version that has something to read under the headline.
     const lead = members.find((member) => member.summary) ?? members.find((member) => member.kind === "news") ?? members[0];
-    return { item: lead, outlets: new Set(members.map((member) => member.source)).size };
+    const sources = [...new Set(members.map((member) => member.source))];
+    return { item: lead, outlets: sources.length, sources };
   });
 }
 

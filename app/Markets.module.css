@@ -122,9 +122,8 @@
 }
 
 /*
- * The brand's block: one oversized EB Garamond line (the market's name) over its mono label (the ticker), beside
- * the price as a stat in Instrument Sans Light over its mono change. The spans are placed by grid area, so their
- * order in the markup does not matter.
+ * The brand's block: one oversized EB Garamond line (the market's name, then its price) over one mono line (the
+ * ticker, then the 24-hour change). The spans are placed by grid area, so their order in the markup does not matter.
  */
 .name {
   grid-area: 1 / 1;
@@ -140,10 +139,16 @@
 
 .price {
   grid-area: 1 / 2;
-  /* The brand asks for Light (300) here. Instrument Sans starts at Regular, which is also what a TV wants. */
-  font: 400 100px/1 var(--mk-sans);
+  /*
+   * The name's face and weight, so the top line is one typeface. Garamond's figures are 0.65em tall against the
+   * 0.7em of the sans this replaced, so 112px keeps the price the largest thing in the header (figures 73px tall;
+   * the name's capitals are 57px). The 94px line box is what keeps the block 148px tall with both on a whole-pixel
+   * baseline. The figures are lining and tabular (the Google Fonts cut's default, asked for anyway): every digit is
+   * one width, so the price does not shift as it ticks. Tabular figures sit loose at this size, hence the tracking.
+   */
+  font: 500 112px/94px var(--mk-display);
   font-variant-numeric: tabular-nums lining-nums;
-  letter-spacing: -.04em;
+  letter-spacing: -.02em;
 }
 
 .change {

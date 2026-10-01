@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { sunAt } from "@/lib/sun";
+import { LIGHTNESS, MAX_LUMINANCE, wavePalette } from "@/lib/wave-palette";
 import styles from "./Background.module.css";
 
 /** One full drift, after which every ribbon is exactly where it started. Each motion term is a whole number of turns per loop, so there is no seam. */
@@ -12,32 +14,43 @@ const RESOLUTION = 0.5;
 const MAX_WIDTH = 1280;
 /** Where the loop stands for the still frame shown under prefers-reduced-motion. */
 const STILL_PHASE = 1.9;
-
-/*
- * Colour is worked out in OKLab, where equal steps look equal, so every ribbon is the same lightness whatever its
- * hue and two ribbons crossing blend through a clean in-between hue instead of going dark and grey.
- *
- * LIGHTNESS is the waves' ceiling (the black canvas, #0C0C0C, is 0.154). MAX_LUMINANCE is the same ceiling as
- * relative luminance, the number contrast is computed from; it is a guard, and it is the level at which the faintest
- * text on the page, the 50% white labels, still has 4.5:1 against the brightest wave. Text sits straight on the waves.
+/**
+ * How often the ribbons' colours are brought up to date with the sun (lib/wave-palette.ts). The palette moves
+ * slowly enough that each refresh is a change of less than one 8-bit level, so the drift has no visible steps; it
+ * costs two uniforms and five CSS properties, and nothing per frame.
  */
-const LIGHTNESS = 0.305;
-const MAX_LUMINANCE = 0.0257;
+const PALETTE_MS = 10_000;
 
 /**
- * The ribbons, top of the screen to bottom, as OKLCH hue and chroma. The hues are one arc of the colour wheel:
- * indigo at 268 degrees, the exact complement of the brand's gold (88.6), then violet and plum, round to the
- * brand's burnt amber (--bab-amber-deep, 42.6). Neighbours on screen are neighbours on the arc, so their blends stay
- * clean. Each chroma is about four fifths of what sRGB can show at this lightness, which keeps the colour rich
- * without clipping.
+ * A way to hold the palette at one moment instead of following the sun. It is null, so the palette follows the
+ * real time. Set it to an instant, written with its UTC offset so the computer's time zone cannot move it (for
+ * example "2026-10-01T08:00:00-07:00", a morning look), and the colours stay at that moment's at every time and
+ * date; the ribbons drift as usual. Nothing else needs to change either way.
  */
-const RIBBONS = [
-  { hue: 268, chroma: 0.16 },
-  { hue: 298, chroma: 0.13 },
-  { hue: 338, chroma: 0.105 },
-  { hue: 42.6, chroma: 0.068 },
-  { hue: 338, chroma: 0.105 },
-];
+const PINNED_TIME: string | null = null;
+
+/**
+ * The clock the palette reads. It is the real clock, or the pinned instant above when one is set, unless the
+ * address asks for a preview, which always wins:
+ *   ?time=17:30             holds that time today (the computer's time zone)
+ *   ?time=2026-12-21T17:30  holds that date and time, to see another season
+ *   ?day=120                runs a whole day every 120 seconds, starting from ?time if given, otherwise from now
+ */
+function paletteClock(search: string): { now: () => Date; refreshMs: number } {
+  const params = new URLSearchParams(search);
+  const time = params.get("time") ?? "";
+  const hoursMinutes = /^(\d{1,2}):(\d{2})$/.exec(time);
+  const asked = hoursMinutes ? new Date().setHours(Number(hoursMinutes[1]), Number(hoursMinutes[2]), 0, 0) : new Date(time).getTime();
+  const pinned = PINNED_TIME === null ? null : new Date(PINNED_TIME).getTime();
+  const held = time && Number.isFinite(asked) ? asked : null;
+  const daySeconds = Number(params.get("day"));
+  if (daySeconds > 0) {
+    const opened = Date.now();
+    return { now: () => new Date((held ?? opened) + (Date.now() - opened) * (86_400 / daySeconds)), refreshMs: FRAME_MS };
+  }
+  const fixed = held ?? pinned;
+  return { now: () => (fixed === null ? new Date() : new Date(fixed)), refreshMs: PALETTE_MS };
+}
 
 const VERTEX = "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }";
 
@@ -104,20 +117,26 @@ void main() {
 }`;
 
 /**
- * The page's ambient background: slow ribbons of colour drifting across the brand's black. Decorative only.
+ * The page's ambient background: slow ribbons of colour drifting across the brand's black, their colours following
+ * the daylight outside (lib/wave-palette.ts). Decorative only.
  * One small WebGL canvas behind everything, mounted once in layout.tsx. Until it has drawn, and wherever WebGL is
  * missing or its context is lost, the still gradient painted by Background.module.css stands in for it.
  */
 export function Background() {
+  const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const el = canvas.current;
-    if (!el) return;
+    const layer = root.current;
+    if (!el || !layer) return;
+    const clock = paletteClock(window.location.search);
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     let gl: WebGLRenderingContext | null = null;
     let uRes: WebGLUniformLocation | null = null;
     let uPhase: WebGLUniformLocation | null = null;
+    let uLight: WebGLUniformLocation | null = null;
+    let uAB: WebGLUniformLocation | null = null;
     let frame = 0;
     let lastDrawn = -Infinity;
 
@@ -145,11 +164,24 @@ export function Background() {
       gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
       uRes = gl.getUniformLocation(program, "uRes");
       uPhase = gl.getUniformLocation(program, "uPhase");
-      gl.uniform1f(gl.getUniformLocation(program, "uLight"), LIGHTNESS);
+      uLight = gl.getUniformLocation(program, "uLight");
+      uAB = gl.getUniformLocation(program, "uAB");
       gl.uniform1f(gl.getUniformLocation(program, "uMaxY"), MAX_LUMINANCE);
-      const ab = new Float32Array(RIBBONS.flatMap(({ hue, chroma }) => [chroma * Math.cos((hue * Math.PI) / 180), chroma * Math.sin((hue * Math.PI) / 180)]));
-      gl.uniform2fv(gl.getUniformLocation(program, "uAB"), ab);
       return true;
+    };
+
+    // The colours for the sun's position now: to the shader as uniforms, and to the still gradient in the
+    // stylesheet as custom properties, so that whatever stands in for the canvas is in the same palette.
+    const colour = () => {
+      const palette = wavePalette(sunAt(clock.now()));
+      // LIGHTNESS is the ceiling; a palette may sit under it but is never let over.
+      const lightness = Math.min(palette.lightness, LIGHTNESS);
+      palette.ribbons.forEach(({ hue, chroma }, i) => {
+        layer.style.setProperty(`--wave-${i}`, `oklch(${lightness.toFixed(4)} ${chroma.toFixed(4)} ${hue.toFixed(2)})`);
+      });
+      if (!gl || gl.isContextLost()) return;
+      gl.uniform1f(uLight, lightness);
+      gl.uniform2fv(uAB, palette.ribbons.flatMap(({ hue, chroma }) => [chroma * Math.cos((hue * Math.PI) / 180), chroma * Math.sin((hue * Math.PI) / 180)]));
     };
 
     const resize = () => {
@@ -179,6 +211,7 @@ export function Background() {
     // (Re)start in whatever state the page is in: still for reduced motion, stopped while hidden, running otherwise.
     const start = () => {
       window.cancelAnimationFrame(frame);
+      colour();
       if (!gl || gl.isContextLost()) return;
       resize();
       if (reduced.matches) draw(STILL_PHASE);
@@ -198,8 +231,16 @@ export function Background() {
     document.addEventListener("visibilitychange", start);
     reduced.addEventListener("change", start);
     if (setup()) start();
+    else colour();
+    // Under reduced motion nothing else redraws, so the still frame is redrawn in the new colours: the shapes stay
+    // put and only the palette drifts, too slowly to see.
+    const refresh = window.setInterval(() => {
+      colour();
+      if (reduced.matches && !document.hidden) draw(STILL_PHASE);
+    }, clock.refreshMs);
 
     return () => {
+      window.clearInterval(refresh);
       window.cancelAnimationFrame(frame);
       el.removeEventListener("webglcontextlost", onLost);
       el.removeEventListener("webglcontextrestored", onRestored);
@@ -210,7 +251,7 @@ export function Background() {
   }, []);
 
   return (
-    <div className={styles.root} aria-hidden="true">
+    <div ref={root} className={styles.root} aria-hidden="true">
       <canvas ref={canvas} className={styles.waves} />
     </div>
   );

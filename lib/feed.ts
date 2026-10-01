@@ -6,6 +6,8 @@
 // and in .data/feed.json, so a restart shows it at once) and starts a refresh in the background
 // when the selection is older than REFRESH_MINUTES. The loop only runs while a screen is asking:
 // after IDLE_PAUSE_MINUTES without a request it stops fetching and stops calling the model.
+//
+// The same refresh also feeds lib/newsworthy.ts (tokens in the news, served by /api/newsworthy).
 
 import { AgentError, agentPlan, fallbackOrder, pickWithAgent, type AgentAttempt } from "./feed-agent";
 import { emptyXState, gatherSources, type SourceCache, type SourceResult, type XState } from "./feed-fetch";
@@ -20,6 +22,7 @@ import {
   REFRESH_MINUTES,
   TARGET_ITEMS,
 } from "./feed-sources";
+import { refreshNewsworthy } from "./newsworthy";
 import { readJson, writeJson } from "./songs-store";
 import type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
 
@@ -227,6 +230,9 @@ async function refresh(): Promise<void> {
     if (agentPlan().order.length) console.warn(`[feed] AI curation failed (${code}); using the fallback ordering`);
   }
   await save();
+  // The newsworthy tokens are chosen from the same fetch, after the feed is up. It keeps its own
+  // schedule (not every refresh) and its own state, and never rejects.
+  await refreshNewsworthy(results, Date.now());
 }
 
 /**

@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { FeedItem, FeedResponse } from "@/lib/feed-types";
+import { useFeaturedStory, type Story } from "./Markets";
+import styles from "./Story.module.css";
 
 /** How fast the list drifts upward, in stage pixels per second. The loop takes as long as the list is tall. */
 export const FEED_SCROLL_PX_PER_S = 30;
@@ -142,8 +144,39 @@ function Entry({ item, now, hidden }: { item: FeedItem; now: number; hidden: boo
   );
 }
 
+/** The longest name that still fits the column at each size of the note's headline. */
+const NOTE_NAME_SIZES: readonly [number, number][] = [[11, 76], [16, 60], [24, 48]];
+const NOTE_NAME_MIN_PX = 40;
+
+/**
+ * The note on a newsworthy token: what happened, and which outlets reported it. The summary is written by a
+ * model (lib/newsworthy.ts), so it is rendered as text and nothing else: no links, no markup.
+ */
+function Note({ story, on, now }: { story: Story; on: boolean; now: number }) {
+  const { name, symbol } = story.asset;
+  const size = NOTE_NAME_SIZES.find(([chars]) => name.length <= chars)?.[1] ?? NOTE_NAME_MIN_PX;
+  const when = age(story.newestAt, now);
+  return (
+    <article className={on ? `${styles.story} ${styles.on}` : styles.story} aria-label={`${name} in the news`} aria-hidden={!on}>
+      <p className={styles.kicker}><span className={styles.dot} aria-hidden="true" />In the news</p>
+      <h2 className={styles.name} style={{ "--name-size": `${size}px` } as CSSProperties} dir="auto">{name}</h2>
+      <p className={styles.symbol}>{symbol}</p>
+      <p className={styles.summary} dir="auto">{story.summary}</p>
+      <div className={styles.foot}>
+        {story.outlets.length > 0 && (
+          <p className={styles.outlets}><span className={styles.label}>Reported by</span>{story.outlets.join(", ")}</p>
+        )}
+        <p className={styles.credit}>AI summary{when ? ` · latest report ${when}` : ""}</p>
+      </div>
+    </article>
+  );
+}
+
 /**
  * Curated news and posts from /api/feed, drifting slowly upward in a loop. Fills its container.
+ *
+ * While a newsworthy token is in the featured slot (see MarketsProvider) its note covers the list, and the
+ * list stops moving underneath, so it carries on from the same place when the note goes.
  *
  * The track holds two copies of the list. It slides up by the height of the first, which leaves the second
  * exactly where the first began; the first is then dropped and a fresh copy added below. A new list from a
@@ -156,6 +189,11 @@ export function Feed() {
   const [now, setNow] = useState(() => Date.now());
   const [paging, setPaging] = useState<{ pages: Page[]; index: number }>({ pages: [], index: 0 });
   const reduced = useReducedMotion();
+  const story = useFeaturedStory();
+  const covered = story !== null;
+  // The last note stays in the markup while it fades out.
+  const [noted, setNoted] = useState<Story | null>(null);
+  if (story && story !== noted) setNoted(story);
 
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
@@ -164,6 +202,7 @@ export function Feed() {
   const pending = useRef<FeedItem[] | null>(null);
   const keys = useRef(0);
   const signature = useRef("");
+  const coveredRef = useRef(false);
 
   const commit = useCallback((next: Half[]) => {
     halvesRef.current = next;
@@ -242,6 +281,15 @@ export function Feed() {
 
   const firstKey = halves[0]?.key ?? null;
 
+  // Declared before the effect that starts a slide, so that one already knows whether to hold still.
+  useLayoutEffect(() => {
+    coveredRef.current = covered;
+    const run = animation.current;
+    if (!run) return;
+    if (covered) run.pause();
+    else if (run.playState === "paused") run.play();
+  }, [covered]);
+
   // Runs once per copy that reaches the top: measures it and starts its slide. Re-measures if its height changes
   // (web fonts arriving), carrying on from the same pixel.
   useLayoutEffect(() => {
@@ -306,6 +354,7 @@ export function Feed() {
         { duration, easing: "linear", fill: "forwards" },
       );
       run.currentTime = Math.min(elapsed, duration);
+      if (coveredRef.current) run.pause();
       run.onfinish = wrap;
       animation.current = run;
     };
@@ -323,16 +372,12 @@ export function Feed() {
     return () => window.clearInterval(timer);
   }, [pageCount]);
 
-  if (!halves.length) {
-    return (
-      <section className="feed" aria-label="News and posts">
-        <p className="feed-note">{note === "loading" ? "Loading news…" : note === "error" ? "News unavailable" : "No news right now"}</p>
-      </section>
-    );
-  }
-
   const page = pageCount ? paging.pages[Math.min(paging.index, pageCount - 1)] : null;
-  return (
+  const list = !halves.length ? (
+    <section className="feed" aria-label="News and posts">
+      <p className="feed-note">{note === "loading" ? "Loading news…" : note === "error" ? "News unavailable" : "No news right now"}</p>
+    </section>
+  ) : (
     <section className={`feed ${halves.length > 1 ? "is-scrolling" : ""}`} aria-label="News and posts">
       <div ref={viewport} className="feed-viewport">
         <div ref={track} className="feed-track" style={page ? { transform: `translate3d(0, ${-page.top}px, 0)` } : undefined}>
@@ -346,5 +391,12 @@ export function Feed() {
         </div>
       </div>
     </section>
+  );
+
+  return (
+    <div className={styles.column}>
+      <div className={covered ? `${styles.layer} ${styles.away}` : styles.layer} aria-hidden={covered || undefined}>{list}</div>
+      {noted && <Note story={noted} on={covered} now={now} />}
+    </div>
   );
 }

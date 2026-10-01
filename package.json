@@ -9,8 +9,10 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "ical.js": "^2.2.1",
     "lucide-react": "^0.468.0",
     "next": "^15.5.0",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
