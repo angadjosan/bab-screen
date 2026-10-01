@@ -316,7 +316,7 @@ const FILLER_PATH = /\/(press-releases?|sponsored|partner-content|advertorial|pr
 
 // Text that reads as an instruction to a language model is treated as an attack on the curation
 // step and dropped before the model ever sees it.
-const INJECTION = /\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|earlier|all|your)\b.{0,30}\b(instructions?|prompts?|rules?|guidelines?)\b|\bsystem prompt\b|\b(you are|as) an? (ai|llm|language model|assistant)\b|\b(assistant|ai|llm|claude|gpt|model)s?\s*[:,]?\s*(must|should|please)\s+(pick|select|choose|include|rank|output|return)\b/i;
+const INJECTION = /\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|earlier|all|your)\b.{0,30}\b(instructions?|prompts?|rules?|guidelines?)\b|\bsystem prompt\b|\b(you are|as) an? (ai|llm|language model|assistant)\b|\b(assistant|ai|llm|claude|gpt|model)s?\s*[:,]?\s*(must|should|please)\s+(pick|select|choose|include|rank|output|return)\b|\battention,? (ai|llm|assistant|model|claude|curator)\b|\b(pick|select|choose|rank|include|show|display|feature)\b.{0,20}\bthis\b.{0,15}\b(item|story|post|headline|candidate|one)\b/i;
 
 // Deliberately short: the agent handles nuance, this is the backstop for the no-AI ordering.
 const UNSUITABLE = /\b(porn\w*|nsfw|onlyfans|nudes?|sex ?tapes?|xxx|fuck\w*|shit\w*|bitch\w*|cunt\w*|asshole\w*|dick ?pics?|rape[sd]?|nazi\w*|suicide|beheading)\b/i;

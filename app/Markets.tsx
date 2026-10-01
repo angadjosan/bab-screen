@@ -29,6 +29,8 @@ const WS_CONNECT_TIMEOUT_MS = 10_000;
 const WS_RETRY_MIN_MS = 1_000;
 const WS_RETRY_MAX_MS = 30_000;
 const TAPE_MIN_ITEMS = 12;
+/** In a header too wide for its column, the market's name shrinks no further than this before the price does. */
+const NAME_MIN_SCALE = 0.5;
 
 type Status = "loading" | "live" | "unavailable";
 type View = { status: Status; quotes: Record<string, Quote> };
@@ -325,6 +327,7 @@ function Chart({ featured, next, onLoaded }: { featured: Asset; next: Asset | nu
 function Header({ asset, quote }: { asset: Asset; quote: Quote | undefined }) {
   const box = useRef<HTMLDivElement>(null);
   const block = useRef<HTMLDivElement>(null);
+  const name = useRef<HTMLSpanElement>(null);
   const price = quote ? formatPrice(asset, quote.price) : "--";
   const change = quote ? formatChange(quote.changePct) : "";
 
@@ -332,7 +335,18 @@ function Header({ asset, quote }: { asset: Asset; quote: Quote | undefined }) {
     const fit = () => {
       if (!box.current || !block.current) return;
       const room = box.current.clientWidth;
-      const need = block.current.offsetWidth;
+      const label = name.current;
+      if (label) label.style.fontSize = "";
+      let need = block.current.offsetWidth;
+      // A long name gives way before the price does: it alone is set smaller, down to half its size.
+      if (label && need > room && room > 0) {
+        const width = label.offsetWidth;
+        const ratio = Math.max(NAME_MIN_SCALE, (width - (need - room)) / width);
+        label.style.fontSize = `${Math.floor(parseFloat(getComputedStyle(label).fontSize) * ratio)}px`;
+        const after = block.current.offsetWidth;
+        if (after < need) need = after; else label.style.fontSize = "";
+      }
+      // Whatever is still too wide (a very long price) scales the whole block.
       block.current.style.transform = need > room && room > 0 ? `scale(${room / need})` : "";
     };
     fit();
@@ -346,7 +360,7 @@ function Header({ asset, quote }: { asset: Asset; quote: Quote | undefined }) {
       <div ref={block} className={styles.headerBlock}>
         <span className={styles.symbol}>{asset.symbol}</span>
         <span className={styles.price}>{price}</span>
-        <span className={styles.name}>{asset.name}</span>
+        <span ref={name} className={styles.name}>{asset.name}</span>
         <span className={styles.change}>
           {quote && <span className={quote.changePct < 0 ? styles.down : styles.up}>{change}</span>}
           {quote && <span className={styles.period}>24h</span>}

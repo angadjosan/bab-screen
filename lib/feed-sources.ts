@@ -1,7 +1,7 @@
 // Where the news-and-posts feed comes from, and how often. Edit the lists here; nothing else needs
 // to change. Every URL below was fetched and checked for recent items on 2026-10-01.
 
-/** A selection is made this often while a screen is polling /api/feed. One Claude call each. */
+/** A selection is made this often while a screen is polling /api/feed. One model call each. */
 export const REFRESH_MINUTES = 15;
 /** The refresh loop pauses when nobody has asked for the feed for this long (the page polls every minute). */
 export const IDLE_PAUSE_MINUTES = 10;
@@ -11,6 +11,8 @@ export const MAX_AGE_HOURS = 36;
 export const MAX_CANDIDATES = 120;
 /** At most this many of one source's newest items become candidates. */
 export const PER_SOURCE_CANDIDATES = 10;
+/** At most this many of one account's newest posts become candidates. */
+export const PER_ACCOUNT_CANDIDATES = 2;
 /** How many items the agent is asked for, and the most that are ever served. */
 export const TARGET_ITEMS = 20;
 export const MAX_ITEMS = 25;

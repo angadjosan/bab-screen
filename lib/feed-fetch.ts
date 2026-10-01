@@ -70,7 +70,12 @@ function errorCode(error: unknown): string {
   if (error instanceof HttpError) return error.code;
   const name = error instanceof Error ? error.name : "";
   if (name === "TimeoutError" || name === "AbortError") return "timeout";
-  return "network_error";
+  // fetch() reports DNS, TLS and socket failures as a TypeError whose cause carries the code.
+  const cause = error instanceof Error ? (error.cause as { code?: unknown; name?: unknown } | undefined) : undefined;
+  const detail = typeof cause?.code === "string" ? cause.code : typeof cause?.name === "string" ? cause.name : null;
+  if (detail === "TimeoutError" || detail === "AbortError" || detail === "UND_ERR_CONNECT_TIMEOUT") return "timeout";
+  if (error instanceof TypeError) return detail && /^[A-Z0-9_]{3,40}$/.test(detail) ? `network_error (${detail})` : "network_error";
+  return `internal_error${name ? ` (${name.slice(0, 40)})` : ""}`;
 }
 
 /** Reads at most `limit` bytes of a body, so a runaway response cannot fill memory. */

@@ -37,14 +37,18 @@
   /* Berkeley Blue: heritage secondary, unused on this screen. */
   --bab-blue: #003262;
 
-  /* Type. One mono per project: DM Mono (the Figma label face) is used for every mono string here. */
+  /*
+   * Type. One mono per project: DM Mono (the Figma label face) is used for every mono string here.
+   * The brand sets big numbers in Instrument Sans Light (300), but the family starts at 400 (Regular), so the
+   * price is set in the Regular.
+   */
   --bab-display: "EB Garamond", Georgia, "Times New Roman", serif;
   --bab-sans: "Instrument Sans", -apple-system, "Segoe UI", Helvetica, sans-serif;
   --bab-mono: "DM Mono", "SF Mono", ui-monospace, Menlo, monospace;
   --bab-track: -0.03em;
 
   /* Grid and shape. */
-  --bab-margin: 46px;
+  --bab-margin: clamp(20px, 5vw, 69px);
   --bab-pad: 31px;
   --bab-row: 46px;
   --bab-radius: 0px;
@@ -56,17 +60,46 @@
   --bab-slow: 480ms;
 
   /*
-   * Not brand tokens. The brand is monochrome plus gold and defines no gain/loss colours, and gold has to stay
-   * the brand's own signal, so price direction keeps a green and a red. These two sit next to the candle
-   * colours TradingView draws inside the chart frame, which the widget does not let the page change.
+   * Everything below is this wallboard's own, not the brand's. Values are worked out in OKLCH and checked for
+   * contrast (WCAG 2 ratio and APCA Lc) against the black canvas and against the brightest wave behind the text.
    */
-  --signal-up: #34D399;
-  --signal-down: #F87171;
+
+  /*
+   * Text levels for a screen read from across a room. The brand's 70% and 50% white come to APCA Lc 63 and 37
+   * here, under what body-size text needs at that distance, so secondary copy is lifted to 80% (Lc 76, 9:1 or
+   * better on any wave) and labels to 68% (Lc 60, 7:1). Point these back at --bab-text-dim and --bab-text-mute
+   * to return to the brand's exact levels.
+   */
+  --text-secondary: rgba(255, 255, 255, 0.80);
+  --text-label: rgba(255, 255, 255, 0.68);
+
+  /*
+   * Price direction. The brand is monochrome plus gold and defines no gain/loss colours, and gold has to stay the
+   * brand's own signal. These are the hues of the candles TradingView draws in the chart (which the widget does
+   * not let the page change), lightened for text on dark: up oklch(0.84 0.15 175), down oklch(0.74 0.154 28).
+   * The teal lean of the green and the orange lean of the red, and the gap in lightness between them, are what
+   * keep the two apart for red-green colour-blind viewers; every figure also carries its + or - sign.
+   */
+  --signal-up: #30EAC5;
+  --signal-down: #FD8173;
+
+  /*
+   * Hairlines over the waves. On the black canvas these are exactly --bab-line (#2A2A2A) and --bab-line-lit
+   * (#3B3B3B); written as white at an opacity, they stay the same weight of rule where a wave passes under them.
+   */
+  --rule: rgba(255, 255, 255, 0.12);
+  --rule-lit: rgba(255, 255, 255, 0.19);
 }
 
-/* Universal tracking is the brand's fingerprint: every face, everywhere, -0.03em. */
-body {
+/*
+ * Universal tracking is the brand's fingerprint: every face, everywhere, -0.03em. It is set on every element
+ * rather than inherited, because an inherited letter-spacing is a fixed length worked out at the body's size.
+ */
+* {
   letter-spacing: var(--bab-track);
+}
+
+body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

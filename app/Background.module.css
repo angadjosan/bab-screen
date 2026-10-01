@@ -1,0 +1,39 @@
+/*
+ * The layer behind the whole window. Its own background is a still gradient in the waves' colours: that is what
+ * shows at first paint, and what stays if WebGL is missing or its context is lost. The canvas fades in over it
+ * once it has drawn a frame.
+ */
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  contain: strict;
+  pointer-events: none;
+  background:
+    radial-gradient(in oklab, 75% 42% at 70% 12%, oklch(0.305 0.16 268 / 0.85), transparent 72%),
+    radial-gradient(in oklab, 85% 38% at 40% 34%, oklch(0.305 0.13 298 / 0.8), transparent 72%),
+    radial-gradient(in oklab, 80% 34% at 22% 58%, oklch(0.305 0.105 338 / 0.75), transparent 72%),
+    radial-gradient(in oklab, 90% 32% at 62% 84%, oklch(0.305 0.068 42.6 / 0.75), transparent 72%),
+    var(--bab-black);
+}
+
+.waves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 1.2s linear;
+}
+
+.waves[data-drawn] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waves {
+    transition: none;
+  }
+}

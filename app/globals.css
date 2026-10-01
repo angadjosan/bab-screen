@@ -2,17 +2,15 @@
 :root {
   --bg: var(--bab-black);
   --ink: var(--bab-text);
-  --muted: var(--bab-text-dim);
-  --faint: var(--bab-text-mute);
-  --line: var(--bab-line);
-  --line-strong: var(--bab-line-lit);
+  --muted: var(--text-secondary);
+  --faint: var(--text-label);
+  --line: var(--rule);
+  --line-strong: var(--rule-lit);
   --up: var(--signal-up);
   --down: var(--signal-down);
   --mono: var(--bab-mono);
   --sans: var(--bab-sans);
   --display: var(--bab-display);
-  /* The brand's monochrome image treatment (.bab-img-mono). Set to none to show photos in colour. */
-  --photo-mono: grayscale(1) contrast(1.15) brightness(0.9);
   --fit: 1;
   --now-playing-height: 120px;
 }
@@ -48,13 +46,60 @@ p {
   height: 1080px;
   transform: translate(-50%, -50%) scale(var(--fit));
   overflow: hidden;
-  background: var(--bg);
-  padding: 48px;
+  /* Clear: the waves (app/Background.tsx) are behind the stage, and the text sits straight on them. */
+  background: transparent;
+  /* The brand's rhythm is 46 and 31. 46 + 42 + 42 + 46 keeps the middle column at the 816px the chart is tuned for. */
+  padding: var(--bab-row);
   display: grid;
   grid-template-columns: 432px minmax(0, 1fr) 496px;
   grid-template-rows: 56px minmax(0, 1fr);
-  column-gap: 40px;
-  row-gap: 24px;
+  column-gap: 42px;
+  row-gap: var(--bab-pad);
+}
+
+/* The ledger frame: a hairline around everything on the stage, half a column gap outside the content. */
+.dashboard::before {
+  content: "";
+  position: absolute;
+  inset: 25px;
+  z-index: -1;
+  border: var(--bab-hair) solid var(--line);
+}
+
+/* Ledger rules: one under the masthead, one in each column gap, all meeting the frame. */
+.top-row,
+.featured-slot {
+  position: relative;
+}
+
+.top-row::after,
+.featured-slot::before,
+.featured-slot::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.top-row::after {
+  left: -21px;
+  right: -21px;
+  bottom: -16px;
+  border-top: var(--bab-hair) solid var(--line);
+}
+
+.featured-slot::before,
+.featured-slot::after {
+  top: -15px;
+  bottom: -21px;
+  border-left: var(--bab-hair) solid var(--line);
+}
+
+.featured-slot::before {
+  left: -21px;
+}
+
+.featured-slot::after {
+  right: -22px;
 }
 
 /* Row 1: the B@B mark at the left edge, then the ticker tape in the width that is left. */
@@ -160,8 +205,9 @@ p {
   white-space: nowrap;
 }
 
+/* A name and a handle too long for the line both give way, each in proportion to its length. */
 .feed-source {
-  flex: 0 100 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -180,6 +226,7 @@ p {
   flex: none;
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
 }
 
 .feed-title,
@@ -207,8 +254,8 @@ p {
 
 /* A post is someone speaking, not a headline: set as running text behind a quote rule. */
 .feed-item.is-tweet .feed-link {
-  padding-left: 18px;
-  border-left: 2px solid var(--line-strong);
+  padding-left: 19px;
+  border-left: var(--bab-hair) solid var(--line-strong);
 }
 
 .feed-item.is-tweet .feed-title {
@@ -256,13 +303,12 @@ p {
   background: var(--bab-surface-1);
 }
 
-/* The brand shows no full-colour photography: covers and spotted photos are rendered in monochrome. */
+/* Covers and spotted photos are shown as they are, in full colour: no filter, tint or overlay. */
 .now-playing-art img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: var(--photo-mono);
 }
 
 .now-playing-body {
@@ -324,6 +370,10 @@ p {
 
 .now-playing-credit-name {
   color: var(--ink);
+}
+
+.now-playing.is-paused .now-playing-credit-name {
+  color: var(--muted);
 }
 
 /* Same bar as the carousel's. This one is a live signal, how far into the track Spotify is, so it gets the gold. */
@@ -396,7 +446,6 @@ p {
   height: 100%;
   object-fit: cover;
   display: block;
-  filter: var(--photo-mono);
   opacity: 0;
   transition: opacity .6s ease;
 }

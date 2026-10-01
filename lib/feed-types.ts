@@ -32,6 +32,9 @@ export type FeedSourceStatus = {
   error: string | null;
 };
 
+/** Which model runner made a selection. */
+export type FeedAgentName = "codex" | "claude-cli" | "claude-api";
+
 export type FeedResponse = {
   status: "ok" | "degraded" | "empty" | "error";
   /** The curated selection in display order. */
@@ -39,7 +42,11 @@ export type FeedResponse = {
   /** When the selection was last made. */
   updatedAt: string | null;
   sources: FeedSourceStatus[];
-  /** "agent" when Claude picked the items, "fallback" when the deterministic ordering was used. */
+  /** "agent" when a model (Codex or Claude) picked the items, "fallback" when the deterministic ordering was used. */
   curation: "agent" | "fallback";
+  /** Which agent picked the current selection; null when the fallback ordering is showing. */
+  agent: FeedAgentName | null;
+  /** The model that agent ran, e.g. "gpt-6-luna" or "claude-haiku-4-5"; null with the fallback. */
+  agentModel: string | null;
   message?: string;
 };

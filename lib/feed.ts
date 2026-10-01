@@ -1,12 +1,13 @@
 // News-and-posts feed for the wall: gathers candidates from the sources in feed-sources.ts,
-// has Claude pick about twenty (feed-agent.ts), and serves the selection from memory.
+// has a model pick about twenty (feed-agent.ts: Codex by default, or Claude), and serves the
+// selection from memory.
 //
 // GET /api/feed never waits for any of that. It answers from the last selection (kept in memory
 // and in .data/feed.json, so a restart shows it at once) and starts a refresh in the background
 // when the selection is older than REFRESH_MINUTES. The loop only runs while a screen is asking:
-// after IDLE_PAUSE_MINUTES without a request it stops fetching and stops calling Claude.
+// after IDLE_PAUSE_MINUTES without a request it stops fetching and stops calling the model.
 
-import { AgentError, agentConfig, fallbackOrder, pickWithClaude } from "./feed-agent";
+import { AgentError, agentPlan, fallbackOrder, pickWithAgent, type AgentAttempt } from "./feed-agent";
 import { emptyXState, gatherSources, type SourceCache, type SourceResult, type XState } from "./feed-fetch";
 import { cluster } from "./feed-parse";
 import {
@@ -14,14 +15,15 @@ import {
   IDLE_PAUSE_MINUTES,
   MAX_CANDIDATES,
   MAX_ITEMS,
+  PER_ACCOUNT_CANDIDATES,
   PER_SOURCE_CANDIDATES,
   REFRESH_MINUTES,
   TARGET_ITEMS,
 } from "./feed-sources";
 import { readJson, writeJson } from "./songs-store";
-import type { FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
+import type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
 
-export type { FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
+export type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
 
 const STATE_FILE = "feed.json";
 const STATE_VERSION = 1;
@@ -32,7 +34,8 @@ const RETRY_AFTER_FAILURE_MS = 2 * 60_000;
 /** A selection older than this is reported as "degraded". */
 const STALE_AFTER_MS = 3 * REFRESH_MINUTES * 60_000;
 
-type AgentReport = { at: string; route: string; model: string; ms: number | null; ok: boolean; error: string | null };
+/** How the last curation went: who produced it (null if nobody did) and everyone who was tried. */
+type AgentReport = { at: string; agent: FeedAgentName | null; model: string | null; ms: number | null; ok: boolean; error: string | null; attempts: AgentAttempt[] };
 
 type Stored = {
   version: number;
@@ -160,7 +163,15 @@ export function buildCandidates(results: SourceResult[], lastShown: string[] = [
   const rested = stories.filter((story) => !shown.has(story.item.id) || story.outlets >= MAJOR_STORY_OUTLETS);
   const offered = rested.length >= 2 * TARGET_ITEMS ? rested : stories;
   const groups = new Map<string, FeedItem[]>();
+  const perAccount = new Map<string, number>();
   for (const item of offered.map((story) => story.item).sort(newestFirst)) {
+    if (item.kind === "tweet") {
+      // One prolific account must not use up the network's whole share of the candidate list.
+      const account = `${item.source} ${item.handle ?? ""}`;
+      const count = (perAccount.get(account) ?? 0) + 1;
+      perAccount.set(account, count);
+      if (count > PER_ACCOUNT_CANDIDATES) continue;
+    }
     const group = groups.get(item.source);
     if (!group) groups.set(item.source, [item]);
     else if (group.length < PER_SOURCE_CANDIDATES) group.push(item);
@@ -202,19 +213,18 @@ async function refresh(): Promise<void> {
   runtime.lastRefreshFailed = false;
   runtime.lastError = null;
 
-  // First selection ever: put the plain ordering up now rather than wait for Claude.
+  // First selection ever: put the plain ordering up now rather than wait for the model.
   if (!state.items.length) publish(fallbackOrder(pool, state.history), pool, "fallback", now, false);
 
-  const config = agentConfig();
   try {
-    const outcome = await pickWithClaude(pool, state.history, now, outlets);
+    const outcome = await pickWithAgent(pool, state.history, now, outlets);
     publish(outcome.ids, pool, "agent", Date.now(), true);
-    state.agent = { at: new Date().toISOString(), route: outcome.route, model: outcome.model, ms: outcome.ms, ok: true, error: null };
+    state.agent = { at: new Date().toISOString(), agent: outcome.agent, model: outcome.model, ms: outcome.ms, ok: true, error: null, attempts: outcome.attempts };
   } catch (error) {
     const code = error instanceof AgentError ? error.code : "internal_error";
     publish(fallbackOrder(pool, state.history), pool, "fallback", Date.now(), true);
-    state.agent = { at: new Date().toISOString(), route: config.route, model: config.model, ms: null, ok: false, error: code };
-    if (code !== "agent_off") console.warn(`[feed] Claude curation failed (${code}); using the fallback ordering`);
+    state.agent = { at: new Date().toISOString(), agent: null, model: null, ms: null, ok: false, error: code, attempts: error instanceof AgentError ? error.attempts : [] };
+    if (agentPlan().order.length) console.warn(`[feed] AI curation failed (${code}); using the fallback ordering`);
   }
   await save();
 }
@@ -244,7 +254,7 @@ export function refreshFeed(options: { force?: boolean } = {}): Promise<void> {
 }
 
 runtime.tick = () => {
-  // Nobody is looking: no fetches, no Claude calls.
+  // Nobody is looking: no fetches, no model calls.
   if (Date.now() - runtime.lastRequestAt > IDLE_PAUSE_MINUTES * 60_000) return;
   void refreshFeed();
 };
@@ -259,7 +269,15 @@ export function ensureFeedLoop(): void {
 
 function response(): FeedResponse {
   const state = runtime.state;
-  const base = { items: state.items, updatedAt: state.updatedAt, sources: state.sources, curation: state.curation };
+  const picked = state.curation === "agent" && state.agent?.ok ? state.agent : null;
+  const base = {
+    items: state.items,
+    updatedAt: state.updatedAt,
+    sources: state.sources,
+    curation: state.curation,
+    agent: picked?.agent ?? null,
+    agentModel: picked?.model ?? null,
+  };
   if (!state.items.length) {
     if (runtime.lastRefreshFailed) return { status: "error", ...base, message: runtime.lastError ?? "refresh failed" };
     return { status: "empty", ...base, message: "First refresh in progress" };
@@ -271,7 +289,7 @@ function response(): FeedResponse {
     stale ? "selection is stale" : null,
     runtime.lastRefreshFailed ? (runtime.lastError ?? "last refresh failed") : null,
     failing.length ? `${failing.length} source${failing.length === 1 ? "" : "s"} failing: ${failing.map((source) => source.name).join(", ")}` : null,
-    state.curation === "fallback" && state.agent?.error ? `AI curation unavailable (${state.agent.error}); showing the newest items` : null,
+    state.curation === "fallback" && state.agent?.error && state.agent.error !== "agent_off" ? `AI curation unavailable (${state.agent.error}); showing the newest items` : null,
   ].filter(Boolean);
   const degraded = stale || runtime.lastRefreshFailed || failing.length > 0;
   return { status: degraded ? "degraded" : "ok", ...base, ...(notes.length ? { message: notes.join("; ") } : {}) };

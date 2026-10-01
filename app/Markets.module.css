@@ -1,9 +1,9 @@
 .tape,
 .featured {
   --mk-ink: var(--bab-text);
-  --mk-muted: var(--bab-text-dim);
-  --mk-faint: var(--bab-text-mute);
-  --mk-line: var(--bab-line);
+  --mk-muted: var(--text-secondary);
+  --mk-faint: var(--text-label);
+  --mk-line: var(--rule);
   --mk-up: var(--signal-up);
   --mk-down: var(--signal-down);
   --mk-mono: var(--bab-mono);
@@ -22,12 +22,15 @@
   box-sizing: border-box;
 }
 
+/* Medium weight: a coloured figure has less contrast than a white one, and a heavier stroke makes up for it. */
 .up {
   color: var(--mk-up);
+  font-weight: 500;
 }
 
 .down {
   color: var(--mk-down);
+  font-weight: 500;
 }
 
 /* Ticker tape */
@@ -35,8 +38,6 @@
   overflow: hidden;
   display: flex;
   align-items: center;
-  border-top: 1px solid var(--mk-line);
-  border-bottom: 1px solid var(--mk-line);
   font: 400 26px/1 var(--mk-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -113,7 +114,7 @@
   flex: none;
   display: inline-grid;
   grid-template-columns: auto auto;
-  column-gap: 48px;
+  column-gap: 46px;
   row-gap: 12px;
   align-items: baseline;
   white-space: nowrap;
@@ -127,7 +128,7 @@
  */
 .name {
   grid-area: 1 / 1;
-  font: 500 104px/1 var(--mk-display);
+  font: 500 88px/1 var(--mk-display);
 }
 
 .symbol {
@@ -139,7 +140,8 @@
 
 .price {
   grid-area: 1 / 2;
-  font: 300 112px/1 var(--mk-sans);
+  /* The brand asks for Light (300) here. Instrument Sans starts at Regular, which is also what a TV wants. */
+  font: 400 100px/1 var(--mk-sans);
   font-variant-numeric: tabular-nums lining-nums;
   letter-spacing: -.04em;
 }
