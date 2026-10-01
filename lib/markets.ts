@@ -169,10 +169,17 @@ export function formatPrice(asset: Pick<Asset, "unit">, value: number, decimals?
 export const TV_WIDGET_ORIGIN = "https://www.tradingview-widget.com";
 /**
  * Candle width on the featured chart, in minutes. The widget has no "last 24 hours" setting (its "1D" range is
- * the day so far, from midnight UTC), so the window comes from how many candles fit: 96 of these across the
- * chart box at the zoom set in Markets.module.css is 24 hours. Change the two together.
+ * the day so far, from midnight UTC), so the window comes from how many candles fit: 48 of these across the
+ * chart box at the zoom set in Markets.module.css is 24 hours. Change the two together, and with the column width.
  */
-export const CHART_INTERVAL = "15";
+export const CHART_INTERVAL = "30";
+/**
+ * The chart is drawn inside TradingView's frame, which cannot read the page's CSS variables, so the two brand
+ * colours it needs are repeated here: --bab-black (the canvas) and --bab-line (hairline rules) from app/brand.css.
+ * The candle colours are TradingView's own; the widget offers no setting for them.
+ */
+const CHART_BACKGROUND = "#0C0C0C";
+const CHART_GRID = "#2A2A2A";
 
 /**
  * The frame address for TradingView's Advanced Chart widget, bare: candles and volume, nothing to click.
@@ -189,8 +196,8 @@ export function chartUrl(symbol: string) {
     theme: "dark",
     style: "1",
     locale: "en",
-    backgroundColor: "#0b0e13",
-    gridColor: "#232a34",
+    backgroundColor: CHART_BACKGROUND,
+    gridColor: CHART_GRID,
     hide_top_toolbar: true,
     hide_side_toolbar: true,
     hide_legend: true,

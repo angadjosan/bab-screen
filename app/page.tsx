@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Feed } from "./Feed";
 import { FeaturedMarket, MarketsProvider, TickerTape } from "./Markets";
 import { NowPlaying } from "./NowPlaying";
 
@@ -180,6 +181,7 @@ export default function Dashboard() {
           <img className="brand-logo" src="/bab-logo.svg" alt="Blockchain at Berkeley" width={344} height={311} />
           <div className="tape-slot"><TickerTape /></div>
         </div>
+        <div className="feed-slot"><Feed /></div>
         <div className="featured-slot"><FeaturedMarket /></div>
         <div className="side-slot">
           <NowPlaying />

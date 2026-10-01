@@ -32,7 +32,9 @@ const SLACK_TIMEOUT_MS = 10_000;
 const MAX_PER_RUN = 5;
 const MAX_TRACKS_PER_MESSAGE = 5;
 const MAX_PENDING = 50;
-const MAX_LOG = 50;
+// Long enough that a request is still in the log when its track finally plays behind a long queue
+// (lib/song-credit.ts reads it for the "Queued by" line).
+const MAX_LOG = 200;
 const MIN_RUN_INTERVAL_MS = 5_000;
 const SLACK_ERROR_BACKOFF_MS = 60_000;
 const DEFAULT_MAX_AGE_MINUTES = 30;

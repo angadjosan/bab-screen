@@ -283,6 +283,8 @@ function Chart({ featured, next, onLoaded }: { featured: Asset; next: Asset | nu
       try { name = (typeof event.data === "string" ? JSON.parse(event.data) : event.data)?.name; } catch { return; }
       if (name === "tv-widget-no-data") onLoaded(coin, false);
       if (name !== "tv-widget-load") return;
+      // Frames stay invisible until TradingView answers, so an unreachable widget shows the note, not a browser error page.
+      frames.current.get(coin)?.setAttribute("data-loaded", "");
       const timer = window.setTimeout(() => {
         timers.delete(timer);
         if (frames.current.has(coin)) onLoaded(coin, true);
@@ -298,6 +300,7 @@ function Chart({ featured, next, onLoaded }: { featured: Asset; next: Asset | nu
   return (
     <div className={styles.chart}>
       <div className={styles.chartFrames}>
+        <p className={styles.chartNote}>Loading chart…</p>
         {shown.map((asset) => asset.tv && (
           <iframe
             key={asset.coin}

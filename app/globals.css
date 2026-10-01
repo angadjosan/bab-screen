@@ -1,16 +1,18 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
-
+/* Colours and faces are the brand's (app/brand.css); these names are what the rest of the stylesheet uses. */
 :root {
-  --bg: #0b0e13;
-  --ink: #e6e9ef;
-  --muted: #9aa3b2;
-  --faint: #7c8696;
-  --line: #232a34;
-  --line-strong: #343d4a;
-  --up: #34d399;
-  --down: #f87171;
-  --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
-  --sans: 'IBM Plex Sans', Arial, sans-serif;
+  --bg: var(--bab-black);
+  --ink: var(--bab-text);
+  --muted: var(--bab-text-dim);
+  --faint: var(--bab-text-mute);
+  --line: var(--bab-line);
+  --line-strong: var(--bab-line-lit);
+  --up: var(--signal-up);
+  --down: var(--signal-down);
+  --mono: var(--bab-mono);
+  --sans: var(--bab-sans);
+  --display: var(--bab-display);
+  /* The brand's monochrome image treatment (.bab-img-mono). Set to none to show photos in colour. */
+  --photo-mono: grayscale(1) contrast(1.15) brightness(0.9);
   --fit: 1;
   --now-playing-height: 120px;
 }
@@ -49,9 +51,9 @@ p {
   background: var(--bg);
   padding: 48px;
   display: grid;
-  grid-template-columns: 1280px 496px;
+  grid-template-columns: 432px minmax(0, 1fr) 496px;
   grid-template-rows: 56px minmax(0, 1fr);
-  column-gap: 48px;
+  column-gap: 40px;
   row-gap: 24px;
 }
 
@@ -80,17 +82,155 @@ p {
   height: 100%;
 }
 
-/* Left column: featured market (header above its chart). */
+/* Middle column: featured market (header above its chart). */
 .featured-slot {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Left column, under the logo: the news and posts feed, for the full height of the row. */
+.feed-slot {
   grid-column: 1;
   grid-row: 2;
   min-width: 0;
   min-height: 0;
 }
 
+.feed {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* clip, not hidden: nothing (focus, find-in-page) can scroll this box out from under the animation. */
+.feed-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: clip;
+}
+
+/* While the list moves, items fade in at the bottom edge and out at the top instead of being cut mid-line. */
+.feed.is-scrolling .feed-viewport {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
+}
+
+.feed-track {
+  position: relative;
+  will-change: transform;
+}
+
+.feed-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  animation: feed-in .6s ease-out;
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Whole-pixel line heights and padding keep every item, and so the loop distance, on the pixel grid. */
+.feed-item {
+  padding: 22px 0 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.feed-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.feed-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--faint);
+  font: 400 18px/26px var(--mono);
+  white-space: nowrap;
+}
+
+.feed-source {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font: 500 20px/26px var(--sans);
+}
+
+.feed-handle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-time {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.feed-title,
+.feed-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.feed-title {
+  -webkit-line-clamp: 4;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 35px;
+}
+
+.feed-summary {
+  -webkit-line-clamp: 3;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 29px;
+}
+
+/* A post is someone speaking, not a headline: set as running text behind a quote rule. */
+.feed-item.is-tweet .feed-link {
+  padding-left: 18px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.feed-item.is-tweet .feed-title {
+  -webkit-line-clamp: 7;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 32px;
+}
+
+.feed-note {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 28px;
+}
+
 /* Right column: what Spotify is playing, then the spotted carousel in the height that is left. */
 .side-slot {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 2;
   min-width: 0;
   min-height: 0;
@@ -112,16 +252,17 @@ p {
   height: 100%;
   aspect-ratio: 1;
   overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: #10141a;
+  border: 1px solid var(--line);
+  background: var(--bab-surface-1);
 }
 
+/* The brand shows no full-colour photography: covers and spotted photos are rendered in monochrome. */
 .now-playing-art img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  filter: var(--photo-mono);
 }
 
 .now-playing-body {
@@ -163,22 +304,41 @@ p {
 .now-playing-state {
   flex: none;
   color: var(--faint);
+  font: 400 20px/1.3 var(--mono);
+  text-transform: uppercase;
 }
 
-/* Same bar as the carousel's: the white part is how far into the track Spotify is. */
+/* Who asked for the track in Slack. It takes the title's second line, so the tile stays the same height. */
+.now-playing.has-credit .now-playing-title {
+  -webkit-line-clamp: 1;
+}
+
+.now-playing-credit {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 20px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.now-playing-credit-name {
+  color: var(--ink);
+}
+
+/* Same bar as the carousel's. This one is a live signal, how far into the track Spotify is, so it gets the gold. */
 .now-playing-bar {
   margin-top: auto;
   flex: none;
   height: 6px;
   overflow: hidden;
-  border-radius: 3px;
-  background: var(--line-strong);
+  background: var(--line);
 }
 
 .now-playing-fill {
   display: block;
   height: 100%;
-  background: var(--ink);
+  background: var(--bab-gold);
   transform: scaleX(0);
   transform-origin: left;
   transition: transform .5s linear;
@@ -201,7 +361,6 @@ p {
   justify-content: center;
   padding: 0 24px;
   border: 1px solid var(--line);
-  border-radius: 6px;
 }
 
 .now-playing-note {
@@ -226,9 +385,8 @@ p {
   overflow: hidden;
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: #10141a;
+  border: 1px solid var(--line);
+  background: var(--bab-surface-1);
 }
 
 .spot-image {
@@ -238,6 +396,7 @@ p {
   height: 100%;
   object-fit: cover;
   display: block;
+  filter: var(--photo-mono);
   opacity: 0;
   transition: opacity .6s ease;
 }
@@ -263,8 +422,7 @@ p {
 .spot-step {
   flex: 1;
   overflow: hidden;
-  border-radius: 3px;
-  background: var(--line-strong);
+  background: var(--line);
 }
 
 .spot-step.is-done {
@@ -319,10 +477,9 @@ p {
   overflow-wrap: anywhere;
 }
 
+/* Who was spotted is the column's headline: EB Garamond, a step below the featured market's name. */
 .spot-names {
-  font-size: 40px;
-  font-weight: 500;
-  line-height: 1.2;
+  font: 500 48px/58px var(--display);
 }
 
 .spot-text {
@@ -349,8 +506,10 @@ p {
 
 .spot-time {
   flex: none;
+  color: var(--faint);
   font: 400 20px/1.3 var(--mono);
   font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -360,6 +519,10 @@ p {
   .now-playing-fill {
     transition: none;
   }
+
+  .feed-group {
+    animation: none;
+  }
 }
 
 .spot-empty {
@@ -368,7 +531,6 @@ p {
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 6px;
   color: var(--muted);
   font-size: 28px;
 }

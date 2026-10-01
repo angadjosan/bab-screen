@@ -1,0 +1,77 @@
+/*
+ * Blockchain at Berkeley brand tokens for the wallboard.
+ * Source of truth: .agents/skills/blockchain-at-berkeley-brand/references/brand.css (values copied unchanged).
+ * The three families are loaded from Google Fonts by the <link> in app/layout.tsx, as the skill prescribes.
+ * Nothing else in the app should hardcode a hex or a font that has a token here.
+ */
+
+:root {
+  /* Neutrals: the whole brand lives here. */
+  --bab-black: #0C0C0C;
+  --bab-black-alt: #0A0A0A;
+  --bab-black-true: #000000;
+  --bab-surface-1: #111111;
+  --bab-surface-2: #1B1B1B;
+  --bab-line: #2A2A2A;
+  --bab-line-soft: rgba(42, 42, 42, 0.65);
+  --bab-line-lit: #3B3B3B;
+
+  --bab-white: #FFFFFF;
+  --bab-text: #FFFFFF;
+  --bab-text-dim: rgba(255, 255, 255, 0.70);
+  --bab-text-mute: rgba(255, 255, 255, 0.50);
+  --bab-text-faint: rgba(255, 255, 255, 0.30);
+
+  /* California Gold: spent like money. */
+  --bab-gold: #FECB33;
+  --bab-gold-sub: #F8BE34;
+  --bab-gold-deep: #EAA536;
+  --bab-gold-cal: #FDB515;
+  --bab-gold-warm: #F4B320;
+  --bab-gold-hot: #FAE42C;
+  --bab-amber-deep: #A43E04;
+
+  --bab-wordmark-dark: #E5E5E5;
+  --bab-wordmark-light: #3D3D3D;
+
+  /* Berkeley Blue: heritage secondary, unused on this screen. */
+  --bab-blue: #003262;
+
+  /* Type. One mono per project: DM Mono (the Figma label face) is used for every mono string here. */
+  --bab-display: "EB Garamond", Georgia, "Times New Roman", serif;
+  --bab-sans: "Instrument Sans", -apple-system, "Segoe UI", Helvetica, sans-serif;
+  --bab-mono: "DM Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --bab-track: -0.03em;
+
+  /* Grid and shape. */
+  --bab-margin: 46px;
+  --bab-pad: 31px;
+  --bab-row: 46px;
+  --bab-radius: 0px;
+  --bab-hair: 1px;
+
+  /* Motion. */
+  --bab-ease: cubic-bezier(0.2, 0.6, 0, 1);
+  --bab-fast: 150ms;
+  --bab-slow: 480ms;
+
+  /*
+   * Not brand tokens. The brand is monochrome plus gold and defines no gain/loss colours, and gold has to stay
+   * the brand's own signal, so price direction keeps a green and a red. These two sit next to the candle
+   * colours TradingView draws inside the chart frame, which the widget does not let the page change.
+   */
+  --signal-up: #34D399;
+  --signal-down: #F87171;
+}
+
+/* Universal tracking is the brand's fingerprint: every face, everywhere, -0.03em. */
+body {
+  letter-spacing: var(--bab-track);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--bab-gold);
+  color: var(--bab-black);
+}

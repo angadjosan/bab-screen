@@ -88,7 +88,7 @@ export function NowPlaying() {
 
   const artwork = track.artworkUrl && track.artworkUrl !== badArtwork ? track.artworkUrl : null;
   return (
-    <section className={`now-playing ${playing ? "" : "is-paused"}`} aria-label="Now playing">
+    <section className={`now-playing ${playing ? "" : "is-paused"} ${track.queuedBy ? "has-credit" : ""}`} aria-label="Now playing">
       <div className="now-playing-art">
         {artwork && <img key={artwork} src={artwork} alt={track.album ? `Cover of ${track.album}` : ""} onError={() => setBadArtwork(artwork)} />}
       </div>
@@ -98,6 +98,12 @@ export function NowPlaying() {
           <span className="now-playing-artist">{track.artists ?? track.album ?? ""}</span>
           {!playing && <span className="now-playing-state">Paused</span>}
         </div>
+        {/* Only for a track that came in through the Slack song-request channel. */}
+        {track.queuedBy && (
+          <p className="now-playing-credit">
+            Queued by <span className="now-playing-credit-name">{track.queuedBy}</span>
+          </p>
+        )}
         {durationMs && (
           <div className="now-playing-bar" aria-hidden="true">
             <span key={trackId} ref={fill} className="now-playing-fill" />

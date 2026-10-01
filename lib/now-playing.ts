@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { getSongCredit } from "./song-credit";
 
 // Reads what the Spotify desktop app on this Mac is playing, through its AppleScript dictionary.
 // Read-only: it never launches Spotify and never touches playback. No Spotify account or API key is involved.
@@ -15,6 +16,9 @@ export type NowPlaying = {
   durationMs: number | null;
   positionMs: number | null;
   trackId: string | null;
+  /** Slack display name of whoever queued this track through the song-request channel; null when it got here another way. */
+  queuedBy: string | null;
+  queuedAt: string | null;
   fetchedAt: number;
 };
 
@@ -75,7 +79,7 @@ const count = (value: unknown) => (typeof value === "number" && Number.isFinite(
 const isPermissionError = (message: string) => /-1743|not authori[sz]ed to send apple events/i.test(message);
 
 function blank(status: NowPlayingStatus, reason?: NowPlaying["reason"]): NowPlaying {
-  return { status, ...(reason ? { reason } : {}), title: null, artists: null, album: null, artworkUrl: null, durationMs: null, positionMs: null, trackId: null, fetchedAt: Date.now() };
+  return { status, ...(reason ? { reason } : {}), title: null, artists: null, album: null, artworkUrl: null, durationMs: null, positionMs: null, trackId: null, queuedBy: null, queuedAt: null, fetchedAt: Date.now() };
 }
 
 async function read(): Promise<NowPlaying> {
@@ -116,6 +120,9 @@ async function read(): Promise<NowPlaying> {
     durationMs: durationMs && durationMs > 0 ? Math.round(durationMs) : null,
     positionMs: positionMs !== null && durationMs ? Math.min(positionMs, durationMs) : positionMs,
     trackId: text(track.id),
+    // Filled in per reply by getNowPlaying, from the song-request log.
+    queuedBy: null,
+    queuedAt: null,
     fetchedAt: Date.now(),
   };
 }
@@ -136,7 +143,10 @@ export async function getNowPlaying(): Promise<NowPlaying> {
       });
     await pending;
   }
-  const value = cached as NowPlaying;
+  const latest = cached as NowPlaying;
+  // Looked up on every reply, not cached with the read: a request can be logged while its track is already playing.
+  const credit = latest.status === "playing" || latest.status === "paused" ? await getSongCredit(latest.trackId) : null;
+  const value: NowPlaying = { ...latest, queuedBy: credit?.queuedBy ?? null, queuedAt: credit?.queuedAt ?? null };
   // Carry the position forward to the moment of the reply so a cached read is not behind.
   const now = Date.now();
   if (value.status !== "playing" || value.positionMs === null) return { ...value, fetchedAt: now };
