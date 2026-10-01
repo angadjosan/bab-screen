@@ -159,7 +159,7 @@ p {
   overflow: clip;
 }
 
-/* While the list moves, items fade in at the bottom edge and out at the top instead of being cut mid-line. */
+/* While the list moves, items fade in at the top edge and out at the bottom instead of being cut mid-line. */
 .feed.is-scrolling .feed-viewport {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
@@ -168,6 +168,12 @@ p {
 .feed-track {
   position: relative;
   will-change: transform;
+}
+
+/* The list moves downward, so the copy that follows the one on screen sits above it. */
+.feed.is-scrolling .feed-track {
+  display: flex;
+  flex-direction: column-reverse;
 }
 
 .feed-group {

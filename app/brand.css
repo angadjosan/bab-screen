@@ -1,7 +1,8 @@
 /*
  * Blockchain at Berkeley brand tokens for the wallboard.
  * Source of truth: .agents/skills/blockchain-at-berkeley-brand/references/brand.css (values copied unchanged).
- * The three families are loaded from Google Fonts by the <link> in app/layout.tsx, as the skill prescribes.
+ * Colours and grid are copied unchanged; type departs from the brand: every font token below is Inter, the one
+ * family loaded from Google Fonts by the <link> in app/layout.tsx.
  * Nothing else in the app should hardcode a hex or a font that has a token here.
  */
 
@@ -38,13 +39,15 @@
   --bab-blue: #003262;
 
   /*
-   * Type. One mono per project: DM Mono (the Figma label face) is used for every mono string here.
-   * The brand sets big numbers in Instrument Sans Light (300), but the family starts at 400 (Regular). The
-   * featured market's price departs from that on purpose: it is set in EB Garamond, the face of the name beside it.
+   * Type. The whole wallboard is set in Inter. The three tokens are kept (display, sans, mono) because the
+   * styles are written against those roles, but they all name the same family; give one a different face here
+   * to bring a role back. Figures that used to line up because they were monospaced now line up because the
+   * body asks for tabular figures (below).
    */
-  --bab-display: "EB Garamond", Georgia, "Times New Roman", serif;
-  --bab-sans: "Instrument Sans", -apple-system, "Segoe UI", Helvetica, sans-serif;
-  --bab-mono: "DM Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --bab-inter: "Inter", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --bab-display: var(--bab-inter);
+  --bab-sans: var(--bab-inter);
+  --bab-mono: var(--bab-inter);
   --bab-track: -0.03em;
 
   /* Grid and shape. */
@@ -100,6 +103,8 @@
 }
 
 body {
+  /* Inherited by everything: fixed-width digits, so prices and times keep their columns without a mono face. */
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

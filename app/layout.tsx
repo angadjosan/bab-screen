@@ -3,8 +3,8 @@ import { Background } from "./Background";
 import "./brand.css";
 import "./globals.css";
 
-// The brand's three families, loaded the way the brand skill prescribes. DM Mono is this project's one mono.
-const BRAND_FONTS = "https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=EB+Garamond:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap";
+// One family for the whole wallboard: Inter, in the weights the styles ask for. Every font token in brand.css points at it.
+const BRAND_FONTS = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";
 
 export const metadata: Metadata = {
   title: "Markets and spotted",

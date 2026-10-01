@@ -5,7 +5,7 @@ import type { FeedItem, FeedResponse } from "@/lib/feed-types";
 import { useFeaturedStory, type Story } from "./Markets";
 import styles from "./Story.module.css";
 
-/** How fast the list drifts upward, in stage pixels per second. The loop takes as long as the list is tall. */
+/** How fast the list drifts downward, in stage pixels per second. The loop takes as long as the list is tall. */
 export const FEED_SCROLL_PX_PER_S = 30;
 /** With reduced motion the list does not move; it shows a screenful of whole items at a time, each for this long. */
 export const FEED_PAGE_MS = 15_000;
@@ -19,10 +19,7 @@ const MAX_ITEMS = 30;
 /** A summary is shown only if its first sentence is no longer than this (three lines of the column). */
 const SUMMARY_MAX_CHARS = 120;
 const SUMMARY_MIN_CHARS = 40;
-/** A new list is only slotted into the lower copy while that copy is at least this far below the column. */
-const SEAM_CLEARANCE_PX = 48;
-
-/** One copy of a list in the track. Scrolling shows two: the one on screen and the one that follows it. */
+/** One copy of a list in the track. Scrolling shows two: the one on screen and, above it, the one that follows it. */
 type Half = { key: number; items: FeedItem[] };
 type Page = { from: number; to: number; top: number };
 type Note = "loading" | "empty" | "error";
@@ -173,15 +170,16 @@ function Note({ story, on, now }: { story: Story; on: boolean; now: number }) {
 }
 
 /**
- * Curated news and posts from /api/feed, drifting slowly upward in a loop. Fills its container.
+ * Curated news and posts from /api/feed, drifting slowly downward in a loop. Fills its container.
  *
  * While a newsworthy token is in the featured slot (see MarketsProvider) its note covers the list, and the
  * list stops moving underneath, so it carries on from the same place when the note goes.
  *
- * The track holds two copies of the list. It slides up by the height of the first, which leaves the second
- * exactly where the first began; the first is then dropped and a fresh copy added below. A new list from a
- * poll goes into the lower copy while that is still out of sight, so the content changes without a jump.
- * A list short enough to fit is shown still.
+ * The track holds two copies of the list, the second drawn above the first (see .feed-track in globals.css).
+ * It slides down by the height of the second, which leaves the second exactly where the first began; the
+ * first is then dropped and a fresh copy added above. A new list from a poll goes into that fresh copy, which
+ * is out of sight when it is added, so the content changes without a jump. A list short enough to fit is
+ * shown still.
  */
 export function Feed() {
   const [halves, setHalves] = useState<Half[]>([]);
@@ -216,17 +214,8 @@ export function Feed() {
     const current = halvesRef.current;
     // Not scrolling (first list, a list that fits, or paged): nothing to keep in step with, so replace it.
     if (current.length < 2) { pending.current = null; commit([{ key: ++keys.current, items }]); return; }
-    const run = animation.current;
-    const first = track.current?.firstElementChild as HTMLElement | null;
-    const view = viewport.current;
-    const offset = ((Number(run?.currentTime) || 0) * FEED_SCROLL_PX_PER_S) / 1000;
-    if (run && first && view && offset + view.clientHeight + SEAM_CLEARANCE_PX < first.offsetHeight) {
-      pending.current = null;
-      commit([current[0], { key: ++keys.current, items }]);
-    } else {
-      // The lower copy is already coming into view; the new list follows it instead.
-      pending.current = items;
-    }
+    // The upper copy starts coming into view as soon as the slide does; the new list follows it instead.
+    pending.current = items;
   }, [commit]);
 
   const clear = useCallback((why: Note) => {
@@ -290,8 +279,8 @@ export function Feed() {
     else if (run.playState === "paused") run.play();
   }, [covered]);
 
-  // Runs once per copy that reaches the top: measures it and starts its slide. Re-measures if its height changes
-  // (web fonts arriving), carrying on from the same pixel.
+  // Runs once per copy that reaches the top: measures the copy above it and starts the slide. Re-measures if a
+  // height changes (web fonts arriving), carrying on from the same pixel.
   useLayoutEffect(() => {
     const strip = track.current;
     const view = viewport.current;
@@ -344,13 +333,15 @@ export function Feed() {
       setPaging((p) => (p.pages.length ? { pages: [], index: 0 } : p));
       const current = halvesRef.current;
       if (current.length < 2) commit([current[0], { key: ++keys.current, items: current[0].items }]);
-      if (height === measured && animation.current) return;
-      measured = height;
+      // The copy above is what slides in. On the pass that adds it, it is not in the track yet: it is the same list.
+      const travel = strip.children.length > 1 ? (strip.lastElementChild as HTMLElement).offsetHeight : height;
+      if (travel === measured && animation.current) return;
+      measured = travel;
       const elapsed = Number(animation.current?.currentTime) || 0;
       stop();
-      const duration = (height / FEED_SCROLL_PX_PER_S) * 1000;
+      const duration = (travel / FEED_SCROLL_PX_PER_S) * 1000;
       const run = strip.animate(
-        [{ transform: "translate3d(0, 0, 0)" }, { transform: `translate3d(0, ${-height}px, 0)` }],
+        [{ transform: `translate3d(0, ${-travel}px, 0)` }, { transform: "translate3d(0, 0, 0)" }],
         { duration, easing: "linear", fill: "forwards" },
       );
       run.currentTime = Math.min(elapsed, duration);
@@ -361,7 +352,7 @@ export function Feed() {
 
     sync();
     const observer = new ResizeObserver(sync);
-    observer.observe(first);
+    observer.observe(strip);
     return () => { observer.disconnect(); stop(); };
   }, [firstKey, reduced, commit]);
 

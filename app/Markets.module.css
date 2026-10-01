@@ -77,8 +77,9 @@
   font: 400 24px/1 var(--mk-sans);
 }
 
+/* Starts one half to the left and slides back to rest, so the tape travels left to right. */
 @keyframes tape-scroll {
-  to {
+  from {
     transform: translateX(-50%);
   }
 }
