@@ -1,5 +1,5 @@
-// Spotify Web API client for song requests: OAuth (Authorization Code flow), token refresh, track
-// search, "add to playlist" and "add to queue". The Web API is the only way to do either; the
+// Spotify client for song requests: link parsing, OAuth (Authorization Code flow), token refresh,
+// track lookup, "add to playlist" and "add to queue". The Web API is the only way to do either; the
 // macOS app's AppleScript dictionary has play/pause/next/play track but no queue or playlist
 // command, and Spotify exposes no API at all for Jams.
 //
@@ -62,16 +62,7 @@ export class SpotifyError extends Error {
   }
 }
 
-export type Track = {
-  id: string;
-  uri: string;
-  name: string;
-  artists: string[];
-  album: string | null;
-  year: string | null;
-  durationMs: number | null;
-  explicit: boolean;
-};
+export type Track = { id: string; name: string; artists: string[] };
 
 export type SpotifyDevice = { id: string | null; name: string; type: string; isActive: boolean };
 
@@ -316,47 +307,18 @@ async function api<T>(
   throw new SpotifyError(`http_${response.status}`, message);
 }
 
-type ApiTrack = {
-  id?: string;
-  uri?: string;
-  name?: string;
-  type?: string;
-  explicit?: boolean;
-  duration_ms?: number;
-  artists?: Array<{ name?: string }>;
-  album?: { name?: string; release_date?: string };
-};
+type ApiTrack = { id?: string; name?: string; type?: string; artists?: Array<{ name?: string }> };
 
 function toTrack(item: ApiTrack | null | undefined): Track | null {
   if (!item?.id || !item.name || (item.type && item.type !== "track")) return null;
   return {
     id: item.id,
-    uri: item.uri ?? `spotify:track:${item.id}`,
     name: item.name,
     artists: (item.artists ?? []).map((artist) => artist.name ?? "").filter(Boolean),
-    album: item.album?.name ?? null,
-    year: item.album?.release_date?.slice(0, 4) || null,
-    durationMs: typeof item.duration_ms === "number" ? item.duration_ms : null,
-    explicit: Boolean(item.explicit),
   };
 }
 
-/** Top track matches for a free-text query. Spotify caps `limit` at 10. */
-export async function searchTracks(query: string, limit = 6): Promise<Track[]> {
-  const payload = await api<{ tracks?: { items?: Array<ApiTrack | null> } }>("GET", "/search", {
-    q: query.slice(0, 200),
-    type: "track",
-    limit: String(Math.min(Math.max(limit, 1), 10)),
-  });
-  const tracks: Track[] = [];
-  for (const item of payload?.tracks?.items ?? []) {
-    const track = toTrack(item);
-    if (track) tracks.push(track);
-  }
-  return tracks;
-}
-
-/** Track metadata by ID, or null if Spotify doesn't know the ID. */
+/** Track metadata by ID, or null if Spotify doesn't know the ID. Throws SpotifyError on other failures. */
 export async function getTrack(id: string): Promise<Track | null> {
   try {
     return toTrack(await api<ApiTrack>("GET", `/tracks/${encodeURIComponent(id)}`));
@@ -453,4 +415,68 @@ export async function playlistTrackIds(
     collect(await api<Page>("GET", path, { limit: String(PLAYLIST_PAGE_SIZE), offset: String(offset) }));
   }
   return { ids: [...ids], total, complete: start === 0 };
+}
+
+// --- Links -----------------------------------------------------------------------------------
+
+const TRACK_ID = "[A-Za-z0-9]{22}";
+// open.spotify.com/track/<id>, optionally behind a locale segment (/intl-de/) or /embed/.
+const TRACK_URL = new RegExp(`open\\.spotify\\.com/(?:intl-[a-z-]+/)?(?:embed/)?track/(${TRACK_ID})(?![A-Za-z0-9])`);
+const TRACK_URI = new RegExp(`spotify:track:(${TRACK_ID})(?![A-Za-z0-9])`);
+const SHORT_URL = /https:\/\/(?:spotify\.link|spotify\.app\.link)\/[A-Za-z0-9_-]+/;
+const ANY_LINK = new RegExp(`${TRACK_URL.source}|${TRACK_URI.source}|${SHORT_URL.source}`, "g");
+const SHORT_LINK_HOSTS = new Set(["spotify.link", "spotify.app.link"]);
+const MAX_SHORT_LINK_HOPS = 4;
+
+/** A Spotify track reference found in a message: the track ID itself, or a short link still to be expanded. */
+export type TrackLink = { trackId: string } | { shortLink: string };
+
+/**
+ * Spotify track links in a piece of text, in order of appearance and without repeats. Recognises
+ * open.spotify.com/track/<id> URLs (query strings and Slack's <url|label> wrapping are fine),
+ * spotify:track:<id> URIs and spotify.link short links. Albums, playlists, artists, episodes and
+ * every other kind of link are not matched.
+ */
+export function findTrackLinks(text: string): TrackLink[] {
+  const links: TrackLink[] = [];
+  const seen = new Set<string>();
+  for (const match of (text ?? "").matchAll(ANY_LINK)) {
+    const trackId = match[1] ?? match[2];
+    const key = trackId ?? match[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push(trackId ? { trackId } : { shortLink: match[0] });
+  }
+  return links;
+}
+
+/**
+ * Follows a spotify.link short link to the track it points at, using HTTP redirects only and
+ * never leaving Spotify's hosts. Returns the track ID, or null when the link does not lead to a
+ * track. Throws SpotifyError on network failure so the caller can try again later.
+ */
+export async function expandShortLink(shortLink: string): Promise<string | null> {
+  let url = new URL(shortLink);
+  for (let hop = 0; hop < MAX_SHORT_LINK_HOPS; hop += 1) {
+    if (url.protocol !== "https:" || !SHORT_LINK_HOSTS.has(url.hostname)) return null;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        redirect: "manual",
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw new SpotifyError(failureCode(error));
+    }
+    const location = response.headers.get("location");
+    if (response.status < 300 || response.status >= 400 || !location) return null;
+    try {
+      url = new URL(location, url);
+    } catch {
+      return null;
+    }
+    if (url.hostname === "open.spotify.com") return url.toString().match(TRACK_URL)?.[1] ?? null;
+  }
+  return null;
 }

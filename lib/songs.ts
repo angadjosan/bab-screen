@@ -1,11 +1,11 @@
-// Song requests: reads new messages from a Slack channel, works out which Spotify track each one
-// means, and adds it to a playlist and/or the playback queue of the connected Spotify account.
+// Song requests: reads new messages from a Slack channel and adds every Spotify track link in
+// them to the playback queue (default) and/or a playlist of the connected Spotify account.
+// Messages without a track link are ignored.
 //
 // syncSongs() is the single entry point. It is idempotent (a persisted cursor means a message is
 // only ever handled once, across restarts too), safe to call concurrently, and never throws.
 
 import { resolveUserName } from "./slack-users";
-import { llmInfo, resolveSongRequest, type LinkPreview } from "./song-resolver";
 import { readJson, writeJson } from "./songs-store";
 import {
   PLAYLIST_SCOPES,
@@ -14,6 +14,9 @@ import {
   addToPlaylist,
   addToQueue,
   createPlaylist,
+  expandShortLink,
+  findTrackLinks,
+  getTrack,
   listDevices,
   parsePlaylistId,
   playlistTrackIds,
@@ -25,8 +28,9 @@ import {
 
 const STATE_FILE = "songs.json";
 const SLACK_TIMEOUT_MS = 10_000;
-/** How many pending requests one run works on (each may need two Claude calls). */
+/** How many pending requests one run works on. */
 const MAX_PER_RUN = 5;
+const MAX_TRACKS_PER_MESSAGE = 5;
 const MAX_PENDING = 50;
 const MAX_LOG = 50;
 const MIN_RUN_INTERVAL_MS = 5_000;
@@ -47,13 +51,6 @@ type SlackMessage = {
   bot_id?: string;
   subtype?: string;
   thread_ts?: string;
-  attachments?: Array<{
-    service_name?: string;
-    title?: string;
-    author_name?: string;
-    from_url?: string;
-    original_url?: string;
-  }>;
 };
 
 type TrackSummary = { id: string; name: string; artists: string[]; url: string };
@@ -66,9 +63,11 @@ type PendingRequest = {
   userName: string | null;
   /** Readable text for the status page. */
   text: string;
-  rawText: string;
-  previews: LinkPreview[];
   postedAt: string;
+  /** From the link itself; for a short link, filled in once it has been expanded. */
+  trackId?: string;
+  shortLink?: string;
+  /** Title and artist, once Spotify has been asked. */
   track?: Track;
   /** Set once the playlist step is finished, so a later queue retry can never add it twice. */
   playlist?: "added" | "duplicate";
@@ -120,6 +119,10 @@ type SongsState = {
   /** Finished requests, newest first. */
   log: SongResult[];
   playlist: PlaylistState | null;
+  /** When Spotify last refused a queue add because the account is not Premium; cleared by a successful add. */
+  premiumRequiredAt: string | null;
+  /** How many messages were skipped for having no track link. */
+  ignored: number;
   lastPollAt: string | null;
   lastSyncAt: string | null;
 };
@@ -136,6 +139,8 @@ export type SongsStatus = {
     error: string | null;
     help: string | null;
     lastPollAt: string | null;
+    /** Messages from people that had no Spotify track link, counted since the state file was created. */
+    ignoredMessages: number;
     replyInThread: boolean;
   };
   spotify: {
@@ -149,7 +154,6 @@ export type SongsStatus = {
     problem: string | null;
     help: string | null;
   };
-  claude: { route: "api" | "cli" | "none"; model: string; help: string | null };
   loop: { running: boolean; everySeconds: number };
   lastSyncAt: string | null;
   pending: Array<{
@@ -179,6 +183,7 @@ type Runtime = {
   spotifyProblem: string | null;
   spotifyHelp: string | null;
   seedRetryAt: number;
+  premiumLogged?: boolean;
 };
 const globalStore = globalThis as typeof globalThis & { __babSongs?: Runtime };
 const runtime: Runtime = (globalStore.__babSongs ??= {
@@ -195,7 +200,7 @@ const runtime: Runtime = (globalStore.__babSongs ??= {
 
 export function songsMode(): SongsMode {
   const value = process.env.SPOTIFY_SONGS_MODE?.trim().toLowerCase();
-  return value === "queue" || value === "both" ? value : "playlist";
+  return value === "playlist" || value === "both" ? value : "queue";
 }
 
 function songsChannel(): string | null {
@@ -233,7 +238,18 @@ function missingScopes(connection: SpotifyConnection, mode: SongsMode): string[]
 // --- State -----------------------------------------------------------------------------------
 
 function emptyState(channel: string | null): SongsState {
-  return { version: 1, channel, cursor: null, pending: [], log: [], playlist: null, lastPollAt: null, lastSyncAt: null };
+  return {
+    version: 1,
+    channel,
+    cursor: null,
+    pending: [],
+    log: [],
+    playlist: null,
+    premiumRequiredAt: null,
+    ignored: 0,
+    lastPollAt: null,
+    lastSyncAt: null,
+  };
 }
 
 async function loadState(channel: string | null): Promise<SongsState> {
@@ -242,7 +258,10 @@ async function loadState(channel: string | null): Promise<SongsState> {
   const state: SongsState = {
     ...emptyState(channel),
     ...stored,
-    pending: Array.isArray(stored.pending) ? stored.pending : [],
+    // Anything without a track reference cannot be acted on.
+    pending: (Array.isArray(stored.pending) ? stored.pending : []).filter(
+      (request) => request.track || request.trackId || request.shortLink,
+    ),
     log: Array.isArray(stored.log) ? stored.log : [],
   };
   // A different channel has a different timeline: start again from "now" rather than replaying it.
@@ -355,7 +374,7 @@ function isCandidate(message: SlackMessage): message is SlackMessage & { ts: str
   return Boolean(message.text?.trim());
 }
 
-/** Reads messages newer than the cursor into state.pending. Returns false when Slack could not be read. */
+/** Turns track links in messages newer than the cursor into pending requests. Returns false when Slack could not be read. */
 async function pollSlack(state: SongsState, channel: string): Promise<boolean> {
   if (Date.now() < runtime.slackRetryAt) return false;
   try {
@@ -381,39 +400,36 @@ async function pollSlack(state: SongsState, channel: string): Promise<boolean> {
         if (state.pending.some((request) => request.ts === message.ts) || state.log.some((result) => result.id.split("#")[0] === message.ts)) {
           continue;
         }
-        const request: PendingRequest = {
-          id: message.ts,
-          ts: message.ts,
-          user: message.user,
-          userName: null,
-          text: displayText(message.text ?? ""),
-          rawText: (message.text ?? "").slice(0, 4_000),
-          previews: (message.attachments ?? [])
-            .filter((attachment) => attachment.title)
-            .slice(0, 3)
-            .map((attachment) => ({
-              service: attachment.service_name ?? null,
-              title: attachment.title ?? null,
-              author: attachment.author_name ?? null,
-              url: attachment.from_url ?? attachment.original_url ?? null,
-            })),
-          postedAt: tsToIso(message.ts),
-          attempts: 0,
-          nextAttemptAt: 0,
-          waitingFor: null,
-          detail: null,
-        };
-        if (Date.now() - Number(message.ts) * 1000 > maxAgeMs()) {
-          // Posted while the server was off, long enough ago that playing it now would be a surprise.
-          finish(state, request, { status: "expired", reason: "too_old", outcome: "Posted too long ago to act on." });
+        const links = findTrackLinks(message.text ?? "").slice(0, MAX_TRACKS_PER_MESSAGE);
+        if (links.length === 0) {
+          state.ignored += 1;
           continue;
         }
-        if (state.pending.length >= MAX_PENDING) {
-          finish(state, request, { status: "failed", reason: "too_many_pending", outcome: "Too many requests are waiting." });
-          continue;
-        }
-        request.userName = await resolveUserName(message.user);
-        state.pending.push(request);
+        const tooOld = Date.now() - Number(message.ts) * 1000 > maxAgeMs();
+        const userName = tooOld ? null : await resolveUserName(message.user);
+        links.forEach((link, position) => {
+          const request: PendingRequest = {
+            id: position === 0 ? message.ts : `${message.ts}#${position + 1}`,
+            ts: message.ts,
+            user: message.user,
+            userName,
+            text: displayText(message.text ?? ""),
+            postedAt: tsToIso(message.ts),
+            ...link,
+            attempts: 0,
+            nextAttemptAt: 0,
+            waitingFor: null,
+            detail: null,
+          };
+          if (tooOld) {
+            // Posted while the server was off, long enough ago that playing it now would be a surprise.
+            finish(state, request, { status: "expired", reason: "too_old", outcome: "Posted too long ago to act on." });
+          } else if (state.pending.length >= MAX_PENDING) {
+            finish(state, request, { status: "failed", reason: "too_many_pending", outcome: "Too many requests are waiting." });
+          } else {
+            state.pending.push(request);
+          }
+        });
       }
     }
     state.lastPollAt = new Date().toISOString();
@@ -447,9 +463,13 @@ function summarize(track: Track | undefined): TrackSummary | null {
   return { id: track.id, name: track.name, artists: track.artists, url: `https://open.spotify.com/track/${track.id}` };
 }
 
-function trackLabel(track: Track | undefined): string {
-  if (!track) return "that song";
+function trackLabel(track: Track): string {
   return track.artists.length > 0 ? `${track.name} — ${track.artists.join(", ")}` : track.name;
+}
+
+/** Stand-in used when Spotify could not be asked for the title; the add itself only needs the ID. */
+function untitled(trackId: string): Track {
+  return { id: trackId, name: `open.spotify.com/track/${trackId}`, artists: [] };
 }
 
 type Outcome = Pick<SongResult, "status" | "reason" | "outcome"> & { queue?: string | null };
@@ -466,7 +486,7 @@ function finish(state: SongsState, request: PendingRequest, outcome: Outcome): S
     status: outcome.status,
     reason: outcome.reason,
     outcome: outcome.outcome,
-    track: summarize(request.track),
+    track: summarize(request.track ?? (request.trackId ? untitled(request.trackId) : undefined)),
     playlist: request.playlist ?? null,
     queue: outcome.queue ?? null,
     repliedInSlack: false,
@@ -481,8 +501,8 @@ const REPLY_STATUSES = new Set<SongResult["status"]>(["added", "queued", "duplic
 
 async function finishAndReply(state: SongsState, request: PendingRequest, outcome: Outcome): Promise<void> {
   const result = finish(state, request, outcome);
-  // Chatter is never answered; only real requests get a reply, and only when replies are enabled.
-  if (REPLY_STATUSES.has(result.status) || result.reason === "not_found") {
+  // Only when replies are enabled, and only to say where the song went.
+  if (REPLY_STATUSES.has(result.status)) {
     result.repliedInSlack = await replyInThread(request, result.outcome);
   }
 }
@@ -501,7 +521,6 @@ const BLOCKING = new Set([
   "login_expired",
   "insufficient_scope",
   "rate_limited",
-  "premium_required",
   "no_active_device",
   "playlist_invalid",
   "playlist_not_found",
@@ -520,9 +539,9 @@ function spotifyHelp(code: string): string {
     case "insufficient_scope":
       return `The stored Spotify login lacks permissions this mode needs: ${login} to grant them.`;
     case "premium_required":
-      return "Adding to the queue needs Spotify Premium on the connected account. Use SPOTIFY_SONGS_MODE=playlist instead, or upgrade.";
+      return "Spotify refused to add to the queue because the connected account is not Premium (PREMIUM_REQUIRED). Connect a Premium account, or set SPOTIFY_SONGS_MODE=playlist.";
     case "no_active_device":
-      return "Nothing is playing on Spotify. Start playback on this computer and waiting requests will be queued.";
+      return "Nothing is playing on Spotify. Press play in the Spotify app on this computer; waiting requests are queued as soon as playback starts.";
     case "rate_limited":
       return "Spotify is rate limiting requests; they resume automatically.";
     case "playlist_invalid":
@@ -665,9 +684,18 @@ async function deliverToQueue(state: SongsState, request: PendingRequest, track:
   try {
     await addToQueue(track.id);
     request.inFlight = undefined;
+    state.premiumRequiredAt = null;
+    runtime.premiumLogged = false;
     return { done: true };
   } catch (error) {
     const { code, detail } = errorCode(error, "queue_failed");
+    if (code === "premium_required") {
+      state.premiumRequiredAt = new Date().toISOString();
+      if (!runtime.premiumLogged) {
+        runtime.premiumLogged = true;
+        console.error(`Song requests: ${spotifyHelp("premium_required")}`);
+      }
+    }
     // A timeout may or may not have reached Spotify: treat like an interruption (no retry).
     request.inFlight = undefined;
     return { done: false, code: code === "timeout" || code === "network_error" ? "interrupted" : code, detail };
@@ -747,6 +775,26 @@ async function deliver(state: SongsState, request: PendingRequest, track: Track,
     });
     return;
   }
+  if (queued.code === "not_found" || queued.code === "http_400") {
+    await finishAndReply(state, request, {
+      status: "failed",
+      reason: "unknown_track",
+      outcome: "Spotify does not recognise that track link.",
+      queue: "unknown_track",
+    });
+    return;
+  }
+  if (queued.code === "premium_required") {
+    // Retrying the same request cannot help. Later requests are still tried, one call each, so a
+    // change of account or plan is noticed without any action here.
+    await finishAndReply(state, request, {
+      status: "failed",
+      reason: "premium_required",
+      outcome: `Not queued: ${label}. Spotify only lets Premium accounts add to the queue.`,
+      queue: "premium_required",
+    });
+    return;
+  }
   if (BLOCKING.has(queued.code)) {
     block(context, request, queued.code, queued.code === "no_active_device" ? await describeDevices() : queued.detail);
     return;
@@ -756,7 +804,7 @@ async function deliver(state: SongsState, request: PendingRequest, track: Track,
 
 async function processPending(state: SongsState, context: RunContext): Promise<void> {
   let handled = 0;
-  // Index loop: resolving a message with several links inserts extra requests right after it.
+  // Index loop: finishing a request removes it from state.pending while iterating.
   for (let index = 0; index < state.pending.length; index += 1) {
     const request = state.pending[index];
 
@@ -779,33 +827,60 @@ async function processPending(state: SongsState, context: RunContext): Promise<v
     if (handled >= MAX_PER_RUN) break;
     handled += 1;
 
-    if (!request.track) {
-      const resolution = await resolveSongRequest(request.rawText, request.previews);
-      if (resolution.kind === "retry") {
-        if (BLOCKING.has(resolution.reason)) block(context, request, resolution.reason, null);
-        else backoff(request, resolution.reason, resolution.detail);
+    if (!request.trackId && request.shortLink) {
+      let expanded: string | null;
+      try {
+        expanded = await expandShortLink(request.shortLink);
+      } catch (error) {
+        const { code, detail } = errorCode(error, "short_link_failed");
+        backoff(request, code, detail);
         await saveState(state);
         continue;
       }
-      if (resolution.kind === "skip") {
+      if (!expanded) {
         await finishAndReply(state, request, {
           status: "skipped",
-          reason: resolution.reason,
-          outcome: resolution.reason === "not_found" ? `Couldn't find that one on Spotify. ${resolution.detail}` : resolution.detail,
+          reason: "not_a_track_link",
+          outcome: "That short link does not lead to a Spotify track.",
         });
         await saveState(state);
         index -= 1;
         continue;
       }
-      const [first, ...rest] = resolution.tracks;
-      request.track = first;
-      const extras = rest.map((track, offset): PendingRequest => ({ ...request, id: `${request.ts}#${offset + 2}`, track }));
-      state.pending.splice(index + 1, 0, ...extras);
-      await saveState(state);
+      request.trackId = expanded;
+    }
+    const trackId = request.track?.id ?? request.trackId;
+    if (!trackId) continue; // unreachable: loadState drops requests without a track reference
+
+    if (!request.track) {
+      // Title and artist for the log and the Slack reply. A link to a track that does not exist
+      // stops here; any other lookup failure must not hold up the add, which only needs the ID.
+      try {
+        const found = await getTrack(trackId);
+        if (!found) {
+          await finishAndReply(state, request, {
+            status: "failed",
+            reason: "unknown_track",
+            outcome: "Spotify does not recognise that track link.",
+          });
+          await saveState(state);
+          index -= 1;
+          continue;
+        }
+        request.track = found;
+      } catch (error) {
+        const { code, detail } = errorCode(error, "lookup_failed");
+        // Account-wide problems (not logged in, rate limited...) would fail the add in the same way.
+        if (BLOCKING.has(code)) {
+          block(context, request, code, detail);
+          await saveState(state);
+          continue;
+        }
+      }
     }
 
     const before = state.pending.length;
-    await deliver(state, request, request.track, context);
+    await deliver(state, request, request.track ?? untitled(trackId), context);
     await saveState(state);
     if (state.pending.length < before) index -= 1;
   }
@@ -850,11 +925,9 @@ export async function getSongsStatus(): Promise<SongsStatus> {
 
   let state = emptyState(channel);
   let connection: SpotifyConnection = { configured: false, connected: false, loginExpired: false, connectedAt: null, scopes: [], rateLimitedUntil: null };
-  let claude: ReturnType<typeof llmInfo> = { route: "none", model: "" };
   try {
     state = await loadState(channel);
     connection = await spotifyConnection();
-    claude = llmInfo();
   } catch {
     // fall through with the empty defaults
   }
@@ -868,7 +941,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
         ? "not_connected"
         : missing.length > 0
           ? "insufficient_scope"
-          : runtime.spotifyProblem;
+          : (runtime.spotifyProblem ?? (mode !== "playlist" && state.premiumRequiredAt ? "premium_required" : null));
   const spotifyHelpText = spotifyProblem
     ? spotifyProblem === runtime.spotifyProblem && runtime.spotifyHelp
       ? runtime.spotifyHelp
@@ -876,23 +949,18 @@ export async function getSongsStatus(): Promise<SongsStatus> {
     : null;
 
   const slackError = slackConfigured ? runtime.slackError : null;
-  const claudeHelp =
-    claude.route === "none"
-      ? "No Claude access: set ANTHROPIC_API_KEY in .env.local or install the claude CLI. Until then only Spotify track links work."
-      : null;
 
   const todo: string[] = [];
   if (!slackConfigured) todo.push("Set SLACK_BOT_TOKEN and SLACK_SONGS_CHANNEL_ID in .env.local.");
   else if (slackError) todo.push(slackHelp(slackError, channel) ?? slackError);
   if (spotifyHelpText) todo.push(spotifyHelpText);
-  if (claudeHelp) todo.push(claudeHelp);
 
   const unconfigured = !slackConfigured || !connection.configured;
   const playlist = mode === "queue" ? null : state.playlist;
 
   return {
     status: unconfigured ? "unconfigured" : todo.length > 0 ? "needs_attention" : "ok",
-    message: todo.length > 0 ? todo.join(" ") : "Listening for song requests.",
+    message: todo.length > 0 ? todo.join(" ") : "Listening for Spotify track links.",
     slack: {
       configured: slackConfigured,
       channel,
@@ -900,6 +968,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       error: slackError,
       help: slackHelp(slackError, channel),
       lastPollAt: state.lastPollAt,
+      ignoredMessages: state.ignored,
       replyInThread: replyEnabled(),
     },
     spotify: {
@@ -921,7 +990,6 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       problem: spotifyProblem,
       help: spotifyHelpText,
     },
-    claude: { ...claude, help: claudeHelp },
     loop: { running: Boolean(runtime.timer), everySeconds },
     lastSyncAt: state.lastSyncAt,
     pending: state.pending.map((request) => ({
@@ -930,7 +998,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       userName: request.userName,
       text: request.text,
       postedAt: request.postedAt,
-      track: summarize(request.track),
+      track: summarize(request.track ?? (request.trackId ? untitled(request.trackId) : undefined)),
       waitingFor: request.waitingFor,
       detail: request.detail,
       attempts: request.attempts,
