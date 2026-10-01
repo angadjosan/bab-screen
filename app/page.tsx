@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FeaturedMarket, MarketsProvider, TickerTape } from "./Markets";
-import NoiseMeter from "./NoiseMeter";
+import { NowPlaying } from "./NowPlaying";
 
 type Spot = {
   id: string;
@@ -178,9 +178,10 @@ export default function Dashboard() {
       <main className="dashboard">
         <div className="tape-slot"><TickerTape /></div>
         <div className="featured-slot"><FeaturedMarket /></div>
-        {/* One instance only: each NoiseMeter opens its own microphone stream. */}
-        <div className="noise-slot"><NoiseMeter /></div>
-        <SpotCard spot={spot} loading={loading} />
+        <div className="side-slot">
+          <NowPlaying />
+          <SpotCard spot={spot} loading={loading} />
+        </div>
       </main>
     </MarketsProvider>
   );

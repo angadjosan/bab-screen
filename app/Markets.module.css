@@ -155,76 +155,39 @@
   font: 400 64px/1 var(--mk-sans);
 }
 
-/* Candle chart */
-.chartWrap,
+/* Candle chart: Lightweight Charts draws into .chartHost and takes its font and colours from it. */
+.chart,
 .chartEmpty {
   min-width: 0;
   min-height: 0;
 }
 
-.chartWrap {
+.chart {
   position: relative;
-  padding: 0 120px 44px 0;
 }
 
-.chartSvg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.chartGrid {
-  stroke: var(--mk-line);
-  stroke-width: 1;
-}
-
-.candleUp {
-  stroke: var(--mk-up);
-  fill: var(--mk-up);
-}
-
-.candleDown {
-  stroke: var(--mk-down);
-  fill: var(--mk-down);
-}
-
-.chartYLabels,
-.chartXLabels {
+.chartHost {
   position: absolute;
-  color: var(--mk-faint);
-  font: 400 20px/1 var(--mk-mono);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  inset: 0;
+  font-family: var(--mk-mono);
 }
 
-.chartYLabels {
-  top: 0;
-  right: 0;
-  bottom: 44px;
-  width: 104px;
-}
-
-.chartYLabels span {
-  position: absolute;
-  right: 0;
-  transform: translateY(-50%);
-}
-
-.chartXLabels {
-  left: 0;
-  right: 120px;
-  bottom: 0;
-  display: flex;
-  justify-content: space-between;
-}
-
+.chartNote,
 .chartEmpty {
   display: grid;
   place-items: center;
-  border: 1px solid var(--mk-line);
-  border-radius: 6px;
   color: var(--mk-muted);
   font: 400 28px/1 var(--mk-sans);
+}
+
+.chartNote {
+  position: absolute;
+  inset: 0;
+}
+
+.chartEmpty {
+  border: 1px solid var(--mk-line);
+  border-radius: 6px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Markets and spotted",
-  description: "Live market prices and candle chart, a room noise meter, and recent Spotbot photos from Slack.",
+  description: "Live market prices and candle chart, and recent Spotbot photos from Slack.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -1,17 +1,10 @@
-# Markets, room noise and Spotbot dashboard
+# Markets and Spotbot dashboard
 
-A fixed 1920x1080 screen for a TV: a scrolling ticker tape, one featured market with a four-hour candle chart, a room noise meter, and a carousel of recent Spotbot photos from Slack. Run `npm run dev` and open http://127.0.0.1:3000 in Chrome.
+A fixed 1920x1080 screen for a TV: a scrolling ticker tape, one featured market with a four-hour candle chart, and a carousel of recent Spotbot photos from Slack. Run `npm run dev` and open http://127.0.0.1:3000 in Chrome.
 
 ## Market data
 
 Prices and candles come from Hyperliquid's public API (`api.hyperliquid.xyz`, REST and WebSocket), called directly from the browser. No API key or account is needed. The list of markets, which is also the tape order and the rotation order of the featured slot, is `ASSETS` in `lib/markets.ts`. Stocks, the S&P 500 and the OpenAI/Anthropic markets are perpetual contracts on Hyperliquid, not exchange quotes.
-
-## Room noise meter
-
-The meter listens to the computer's default microphone in the browser; audio is not recorded or sent anywhere. The dB figure is an estimate, not a calibrated measurement: it can be 10 dB out until `CALIBRATION_OFFSET_DB` in `app/NoiseMeter.tsx` is set against a real sound level meter (steps are in the comment above that constant).
-
-- Chrome only offers the microphone on `localhost` / `127.0.0.1` (or https), so open the page at one of those, not at the machine's LAN address.
-- Allow the microphone for the page when Chrome asks, and allow Chrome under macOS System Settings > Privacy & Security > Microphone. Until both are granted, the meter shows a one-line notice instead of a reading.
 
 ## Connect Spotbot in Slack
 

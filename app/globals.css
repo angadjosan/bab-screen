@@ -12,6 +12,7 @@
   --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
   --sans: 'IBM Plex Sans', Arial, sans-serif;
   --fit: 1;
+  --now-playing-height: 120px;
 }
 
 * {
@@ -49,7 +50,7 @@ p {
   padding: 48px;
   display: grid;
   grid-template-columns: 1280px 496px;
-  grid-template-rows: 56px 168px minmax(0, 1fr);
+  grid-template-rows: 56px minmax(0, 1fr);
   column-gap: 48px;
   row-gap: 24px;
 }
@@ -61,26 +62,140 @@ p {
   min-width: 0;
 }
 
-/* Left column: featured market. Its own grid (168px header, 24px gap, chart) lines up with rows 2 and 3. */
+/* Left column: featured market (header above its chart). */
 .featured-slot {
   grid-column: 1;
-  grid-row: 2 / -1;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* Right column, beside the featured header: room noise. */
-.noise-slot {
-  grid-column: 2;
   grid-row: 2;
   min-width: 0;
   min-height: 0;
 }
 
-/* Right column, beside the chart: spotted carousel. */
-.spot-card {
+/* Right column: what Spotify is playing, then the spotted carousel in the height that is left. */
+.side-slot {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.now-playing {
+  flex: none;
+  height: var(--now-playing-height);
+  min-width: 0;
+  display: flex;
+  gap: 20px;
+}
+
+.now-playing-art {
+  flex: none;
+  height: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #10141a;
+}
+
+.now-playing-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.now-playing-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.now-playing-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.now-playing-meta {
+  margin-top: 2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.now-playing-artist {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-playing-state {
+  flex: none;
+  color: var(--faint);
+}
+
+/* Same bar as the carousel's: the white part is how far into the track Spotify is. */
+.now-playing-bar {
+  margin-top: auto;
+  flex: none;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+
+.now-playing-fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .5s linear;
+}
+
+.now-playing.is-paused .now-playing-title {
+  color: var(--muted);
+}
+
+.now-playing.is-paused .now-playing-art img {
+  opacity: .45;
+}
+
+.now-playing.is-paused .now-playing-fill {
+  background: var(--faint);
+}
+
+.now-playing.is-empty {
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.now-playing-note {
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1.3;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.spot-card {
+  flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -223,7 +338,8 @@ p {
 @media (prefers-reduced-motion: reduce) {
   .spot-image,
   .spot-caption-item,
-  .spot-caption-item.is-active {
+  .spot-caption-item.is-active,
+  .now-playing-fill {
     transition: none;
   }
 }

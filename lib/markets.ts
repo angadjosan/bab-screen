@@ -13,28 +13,54 @@ export type Asset = {
   kind: AssetKind;
   /** "usd-billions": the contract is quoted in billions of dollars of implied company valuation. */
   unit: "usd" | "usd-billions";
+  /**
+   * Tokens per contract. Hyperliquid quotes its "k" markets (kSHIB, kPEPE, kBONK) per 1,000 tokens;
+   * prices are divided by this (and volumes multiplied) as they are read, so everything on screen is per token.
+   */
+  lot: number;
 };
 
-const crypto = (symbol: string, name: string): Asset => ({ symbol, name, coin: symbol, kind: "crypto", unit: "usd" });
-const stock = (symbol: string, name: string): Asset => ({ symbol, name, coin: `xyz:${symbol}`, kind: "stock", unit: "usd" });
+const crypto = (symbol: string, name: string, coin = symbol, lot = 1): Asset => ({ symbol, name, coin, kind: "crypto", unit: "usd", lot });
+const stock = (symbol: string, name: string): Asset => ({ symbol, name, coin: `xyz:${symbol}`, kind: "stock", unit: "usd", lot: 1 });
 
-// Order is the rotation order and the tape order.
-export const ASSETS: readonly Asset[] = [
+// The 30 largest cryptocurrencies by market cap (CoinGecko, 30 Sep 2026) that trade on Hyperliquid's own perp dex,
+// largest first. Stablecoins, tokenised dollars/gold and coins Hyperliquid does not list are left out.
+const CRYPTO: readonly Asset[] = [
   crypto("BTC", "Bitcoin"),
   crypto("ETH", "Ethereum"),
-  crypto("SOL", "Solana"),
-  crypto("HYPE", "Hyperliquid"),
-  crypto("XMR", "Monero"),
-  crypto("ZEC", "Zcash"),
   crypto("BNB", "BNB"),
   crypto("XRP", "XRP"),
+  crypto("SOL", "Solana"),
   crypto("TRX", "TRON"),
+  crypto("ZEC", "Zcash"),
+  crypto("HYPE", "Hyperliquid"),
+  crypto("DOGE", "Dogecoin"),
+  crypto("LINK", "Chainlink"),
+  crypto("XMR", "Monero"),
   crypto("ADA", "Cardano"),
   crypto("XLM", "Stellar"),
   crypto("NEAR", "NEAR Protocol"),
   crypto("BCH", "Bitcoin Cash"),
+  crypto("UNI", "Uniswap"),
   crypto("LTC", "Litecoin"),
-  { symbol: "SP500", name: "S&P 500 perp", coin: "xyz:SP500", kind: "index", unit: "usd" },
+  crypto("CC", "Canton"),
+  crypto("AVAX", "Avalanche"),
+  crypto("SUI", "Sui"),
+  crypto("HBAR", "Hedera"),
+  crypto("GRAM", "Gram (formerly Toncoin)"),
+  crypto("TAO", "Bittensor"),
+  crypto("SHIB", "Shiba Inu", "kSHIB", 1000),
+  crypto("ENA", "Ethena"),
+  crypto("PUMP", "Pump.fun"),
+  crypto("AAVE", "Aave"),
+  crypto("ONDO", "Ondo"),
+  crypto("MNT", "Mantle"),
+  crypto("DOT", "Polkadot"),
+];
+
+// trade.xyz (HIP-3 dex "xyz").
+const STOCKS: readonly Asset[] = [
+  { symbol: "SP500", name: "S&P 500 perp", coin: "xyz:SP500", kind: "index", unit: "usd", lot: 1 },
   stock("NVDA", "Nvidia"),
   stock("AAPL", "Apple"),
   stock("MSFT", "Microsoft"),
@@ -42,30 +68,41 @@ export const ASSETS: readonly Asset[] = [
   stock("AMZN", "Amazon"),
   stock("META", "Meta"),
   stock("TSLA", "Tesla"),
-  { symbol: "OPENAI", name: "OpenAI implied valuation", coin: "io:OAI", kind: "preipo", unit: "usd-billions" },
-  { symbol: "ANTHROPIC", name: "Anthropic implied valuation", coin: "io:ANTH", kind: "preipo", unit: "usd-billions" },
 ];
+
+// EntropyIO (HIP-3 dex "io"); trade.xyz does not list these. Drop this group to be trade.xyz-only.
+const PRE_IPO: readonly Asset[] = [
+  { symbol: "OPENAI", name: "OpenAI implied valuation", coin: "io:OAI", kind: "preipo", unit: "usd-billions", lot: 1 },
+  { symbol: "ANTHROPIC", name: "Anthropic implied valuation", coin: "io:ANTH", kind: "preipo", unit: "usd-billions", lot: 1 },
+];
+
+// Order is the rotation order and the tape order.
+export const ASSETS: readonly Asset[] = [...CRYPTO, ...STOCKS, ...PRE_IPO];
 
 export const HL_INFO_URL = "https://api.hyperliquid.xyz/info";
 export const HL_WS_URL = "wss://api.hyperliquid.xyz/ws";
 /** Perp dexes the asset list draws on; "" is Hyperliquid's own. */
 export const HL_DEXES: readonly string[] = [...new Set(ASSETS.map((a) => (a.coin.includes(":") ? a.coin.split(":")[0] : "")))];
 
+/** Candles are fetched at this resolution (app/Markets.tsx groups them into wider bars) ... */
+export const CANDLE_INTERVAL = "1m";
+/** ... over this much history. */
 export const CANDLE_WINDOW_MS = 4 * 60 * 60_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 
 export type Quote = { price: number; changePct: number; at: number };
-export type Candle = { time: number; open: number; high: number; low: number; close: number };
+/** `volume` is in units of the asset (tokens, shares, or billions of valuation), not dollars. */
+export type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
 type RawCtx = { markPx?: string | null; prevDayPx?: string | null };
 type RawMeta = { universe?: { name?: string; isDelisted?: boolean }[] };
-type RawCandle = { t?: number; o?: string; h?: string; l?: string; c?: string };
+type RawCandle = { t?: number; i?: string; o?: string; h?: string; l?: string; c?: string; v?: string };
 
 /** Mark price and change against the price 24 hours ago, from a Hyperliquid asset context. */
-export function quoteFromCtx(ctx: unknown, at: number): Quote | null {
+export function quoteFromCtx(asset: Pick<Asset, "lot">, ctx: unknown, at: number): Quote | null {
   if (!ctx || typeof ctx !== "object") return null;
   const { markPx, prevDayPx } = ctx as RawCtx;
-  const price = Number(markPx);
+  const price = Number(markPx) / asset.lot;
   const prev = Number(prevDayPx);
   if (!Number.isFinite(price) || price <= 0) return null;
   return { price, changePct: Number.isFinite(prev) && prev > 0 ? ((price - prev) / prev) * 100 : 0, at };
@@ -85,7 +122,7 @@ async function info<T>(body: unknown): Promise<T> {
 
 /** One request per dex. Returns quotes for the listed assets and the coins the exchange has delisted. */
 export async function fetchQuotes(): Promise<{ quotes: Map<string, Quote>; delisted: Set<string> }> {
-  const wanted = new Set(ASSETS.map((a) => a.coin));
+  const wanted = new Map(ASSETS.map((a) => [a.coin, a]));
   const quotes = new Map<string, Quote>();
   const delisted = new Set<string>();
   const results = await Promise.allSettled(HL_DEXES.map((dex) => info<[RawMeta, unknown[]]>({ type: "metaAndAssetCtxs", dex })));
@@ -96,8 +133,9 @@ export async function fetchQuotes(): Promise<{ quotes: Map<string, Quote>; delis
     const [meta, ctxs] = result.value;
     (meta?.universe ?? []).forEach((entry, i) => {
       const coin = entry?.name;
-      if (!coin || !wanted.has(coin)) return;
-      const quote = entry.isDelisted ? null : quoteFromCtx(ctxs?.[i], at);
+      const asset = coin ? wanted.get(coin) : undefined;
+      if (!coin || !asset) return;
+      const quote = entry.isDelisted ? null : quoteFromCtx(asset, ctxs?.[i], at);
       if (quote) quotes.set(coin, quote); else delisted.add(coin);
     });
   }
@@ -105,25 +143,36 @@ export async function fetchQuotes(): Promise<{ quotes: Map<string, Quote>; delis
   return { quotes, delisted };
 }
 
-/** The last four hours of one-minute candles, oldest first. */
-export async function fetchCandles(coin: string): Promise<Candle[]> {
+/** One candle as Hyperliquid sends it (REST snapshot or "candle" WebSocket channel), per token; null if malformed. */
+export function candleFromRaw(asset: Pick<Asset, "lot">, raw: unknown): Candle | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as RawCandle;
+  if (c.i !== undefined && c.i !== CANDLE_INTERVAL) return null;
+  const volume = Number(c.v) * asset.lot;
+  const candle = { time: Number(c.t), open: Number(c.o) / asset.lot, high: Number(c.h) / asset.lot, low: Number(c.l) / asset.lot, close: Number(c.c) / asset.lot, volume: Number.isFinite(volume) ? volume : 0 };
+  return [candle.time, candle.open, candle.high, candle.low, candle.close].every(Number.isFinite) && candle.low > 0 ? candle : null;
+}
+
+/** The last CANDLE_WINDOW_MS of candles, oldest first. */
+export async function fetchCandles(asset: Pick<Asset, "coin" | "lot">): Promise<Candle[]> {
   const endTime = Date.now();
-  const raw = await info<RawCandle[]>({ type: "candleSnapshot", req: { coin, interval: "1m", startTime: endTime - CANDLE_WINDOW_MS, endTime } });
+  const raw = await info<unknown[]>({ type: "candleSnapshot", req: { coin: asset.coin, interval: CANDLE_INTERVAL, startTime: endTime - CANDLE_WINDOW_MS, endTime } });
   if (!Array.isArray(raw)) throw new Error("Invalid candle data");
   return raw
-    .map((c) => ({ time: Number(c?.t), open: Number(c?.o), high: Number(c?.h), low: Number(c?.l), close: Number(c?.c) }))
-    .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite) && c.low > 0)
+    .map((c) => candleFromRaw(asset, c))
+    .filter((c): c is Candle => c !== null)
     .sort((a, b) => a.time - b.time);
 }
 
-/** Decimals that keep a price readable at any magnitude: $83,852 / $2,696.60 / $1.5024 / $0.25175. */
+/** Decimals that keep a price readable at any magnitude: $83,852 / $2,696.60 / $1.5024 / $0.25175 / $0.000005835. */
 export function priceDecimals(value: number) {
   const v = Math.abs(value);
   if (v >= 10_000) return 0;
   if (v >= 10) return 2;
   if (v >= 1) return 4;
   if (v >= 0.01) return 5;
-  return 6;
+  // Four significant digits, which is as fine as Hyperliquid quotes such prices.
+  return v > 0 ? Math.min(12, Math.ceil(-Math.log10(v)) + 3) : 2;
 }
 
 export function formatPrice(asset: Pick<Asset, "unit">, value: number, decimals?: number) {
@@ -136,11 +185,15 @@ export function formatPrice(asset: Pick<Asset, "unit">, value: number, decimals?
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
-/** Decimals for a price scale whose labels are `step` apart (`top` is the largest label). */
-export function scaleDecimals(asset: Pick<Asset, "unit">, step: number, top: number) {
-  const scaled = asset.unit === "usd-billions" && Math.abs(top) >= 1000 ? step / 1000 : step;
-  if (!(scaled > 0)) return undefined;
-  return Math.max(0, Math.min(6, Math.ceil(-Math.log10(scaled)) + 1));
+/** Labels for a price scale: the fewest decimals that tell every tick apart, the same for all of them. */
+export function formatScale(asset: Pick<Asset, "unit">, values: readonly number[]) {
+  const trillions = asset.unit === "usd-billions" && Math.max(...values.map(Math.abs)) >= 1000;
+  const shown = values.map((v) => (trillions ? v / 1000 : v));
+  let decimals = 0;
+  while (decimals < 12 && shown.some((v) => Math.abs(v * 10 ** decimals - Math.round(v * 10 ** decimals)) > 1e-6 * Math.max(1, Math.abs(v * 10 ** decimals)))) decimals += 1;
+  // Dollars and cents, never dollars and dimes.
+  if (asset.unit === "usd" && decimals === 1) decimals = 2;
+  return values.map((v) => formatPrice(asset, v, decimals));
 }
 
 export function formatChange(pct: number) {
