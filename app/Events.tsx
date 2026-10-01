@@ -11,6 +11,10 @@ const REQUEST_TIMEOUT_MS = 8_000;
 /** The clock is re-read at the next start or end, and at least this often (midnight, a machine waking from sleep). */
 const MAX_TICK_MS = 30_000;
 const DAY_MS = 86_400_000;
+/** Only the week ahead is listed: an event has to start within this long from now (or be under way). */
+const WEEK_AHEAD_MS = 7 * DAY_MS;
+/** With more events than rows, each page of them is held this long before the next takes its place. */
+const PAGE_HOLD_MS = 10_000;
 const DEFAULT_ZONE = "America/Los_Angeles";
 
 // These four must match Events.module.css: the row count is worked out from them, so no row is ever cut off.
@@ -23,7 +27,7 @@ const HEADER_PX = 32;
 export type EventsState = {
   /** "loading" until the first answer, then the API's status. */
   status: EventsResponse["status"];
-  /** Events that have not ended, i.e. how many rows there are to show (the height may allow fewer). */
+  /** Events in the week ahead that have not ended, i.e. how many rows there are to show (a page at a time if the height allows fewer). */
   count: number;
 };
 
@@ -115,8 +119,9 @@ function describe(event: CalendarEvent, now: number, formats: Formats): When {
 }
 
 /**
- * The next few events from the club calendar. Fills its container (give it a width and a height)
- * and shows as many whole rows as fit: nothing is ever cut off or scrolled.
+ * The week ahead from the club calendar. Fills its container (give it a width and a height) and shows
+ * as many whole rows as fit: nothing is ever cut off or scrolled. More events than rows are shown a
+ * page at a time, in turn.
  */
 export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState, quietWhenEmpty = false }: Props) {
   const [data, setData] = useState<EventsResponse | null>(null);
@@ -166,11 +171,11 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
   const zone = useMemo(() => safeZone(data?.timeZone), [data?.timeZone]);
   const formats = useMemo(() => formatsFor(zone), [zone]);
 
-  // Soonest first; anything that has ended is gone as of this render's `now`.
+  // Soonest first; anything that has ended, or starts more than a week out, is not there as of this render's `now`.
   const list = useMemo(() => {
     const source = fixed ?? data?.events ?? [];
     return source
-      .filter((event) => Number.isFinite(Date.parse(event.start)) && Date.parse(event.end) > now)
+      .filter((event) => Date.parse(event.start) < now + WEEK_AHEAD_MS && Date.parse(event.end) > now)
       .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   }, [fixed, data, now]);
 
@@ -217,6 +222,18 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
   const showLabel = label !== null && label !== "" && rows > 0 && HEADER_PX + rows * ROW_MIN_PX + (rows - 1) * RULE_PX <= height;
   const rowHeight = rows > 0 ? Math.min(ROW_MAX_PX, Math.floor((height - (showLabel ? HEADER_PX : 0) - (rows - 1) * RULE_PX) / rows)) : 0;
 
+  // Pages are whole rows of one height; the last may be short, and leaves its space empty rather than stretch.
+  const pages = rows > 0 ? Math.ceil(shown.length / rows) : 1;
+  const [page, setPage] = useState(0);
+  // An event ending or the box changing can leave fewer pages than the one being shown: back to the first.
+  const current = page < pages ? page : 0;
+
+  useEffect(() => {
+    if (pages < 2) return;
+    const hold = window.setInterval(() => setPage((shownPage) => (shownPage + 1) % pages), PAGE_HOLD_MS);
+    return () => window.clearInterval(hold);
+  }, [pages]);
+
   if (!shown.length) {
     const loading = !fixed && (data === null || data.status === "loading");
     const note = loading || quietWhenEmpty ? "" : !fixed && data?.status === "error" ? "Calendar not connected" : "No upcoming events";
@@ -230,8 +247,9 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
   return (
     <section ref={root} className={styles.events} aria-label="Upcoming events">
       {showLabel && <p className={styles.header}>{label}</p>}
-      <ol className={styles.list}>
-        {shown.slice(0, rows).map((event) => {
+      {/* Keyed by page, so each page fades in as it takes its turn. */}
+      <ol key={current} className={styles.list}>
+        {shown.slice(current * rows, (current + 1) * rows).map((event) => {
           const when = describe(event, now, formats);
           return (
             <li key={event.id} className={`${styles.row} ${when.live ? styles.isLive : ""}`} style={{ height: rowHeight }}>

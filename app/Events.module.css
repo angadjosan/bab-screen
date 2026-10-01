@@ -25,11 +25,25 @@
   white-space: nowrap;
 }
 
+/* Each page of events fades in as it takes its turn (Events.tsx remounts the list per page). */
 .list {
   flex: none;
   margin: 0;
   padding: 0;
   list-style: none;
+  animation: page-in var(--bab-slow) linear;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .list {
+    animation: none;
+  }
 }
 
 /* content-box: the hairline between rows is counted on top of the height Events.tsx sets. */
