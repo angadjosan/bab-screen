@@ -48,105 +48,39 @@ p {
   background: var(--bg);
   padding: 48px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 496px;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: 1280px 496px;
+  grid-template-rows: 56px 168px minmax(0, 1fr);
   column-gap: 48px;
-  row-gap: 32px;
+  row-gap: 24px;
 }
 
-/* Bitcoin price */
-.price {
+/* Row 1: ticker tape across the full width. */
+.tape-slot {
   grid-column: 1 / -1;
   grid-row: 1;
-  font: 500 168px/1 var(--mono);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.04em;
-  white-space: nowrap;
+  min-width: 0;
 }
 
-.price-pending {
-  color: var(--muted);
-  font: 400 64px/168px var(--sans);
-  letter-spacing: 0;
-}
-
-/* Candle chart */
-.chart-wrap,
-.chart-empty {
+/* Left column: featured market. Its own grid (168px header, 24px gap, chart) lines up with rows 2 and 3. */
+.featured-slot {
   grid-column: 1;
+  grid-row: 2 / -1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Right column, beside the featured header: room noise. */
+.noise-slot {
+  grid-column: 2;
   grid-row: 2;
   min-width: 0;
   min-height: 0;
 }
 
-.chart-wrap {
-  position: relative;
-  padding: 0 120px 44px 0;
-}
-
-.chart-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.chart-grid {
-  stroke: var(--line);
-  stroke-width: 1;
-}
-
-.candle-up {
-  stroke: var(--up);
-  fill: var(--up);
-}
-
-.candle-down {
-  stroke: var(--down);
-  fill: var(--down);
-}
-
-.chart-y-labels,
-.chart-x-labels {
-  position: absolute;
-  color: var(--faint);
-  font: 400 20px/1 var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.chart-y-labels {
-  top: 0;
-  right: 0;
-  bottom: 44px;
-  width: 104px;
-}
-
-.chart-y-labels span {
-  position: absolute;
-  right: 0;
-  transform: translateY(-50%);
-}
-
-.chart-x-labels {
-  left: 0;
-  right: 120px;
-  bottom: 0;
-  display: flex;
-  justify-content: space-between;
-}
-
-.chart-empty {
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 28px;
-}
-
-/* Spotted, bottom right */
+/* Right column, beside the chart: spotted carousel. */
 .spot-card {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
   display: flex;

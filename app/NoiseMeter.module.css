@@ -19,10 +19,9 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  padding: calc(var(--u) * 9) calc(var(--u) * 10);
-  border: 1px solid #232a34;
-  border-radius: 6px;
-  background: #10141a;
+  /* No box of its own: like the rest of the screen it sits straight on the page background.
+     The small vertical inset lines its text up with the featured-market header beside it. */
+  padding: calc(var(--u) * 2.4) 0;
   color: #e6e9ef;
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   display: grid;
@@ -39,7 +38,7 @@
 .label {
   grid-area: label;
   color: #9aa3b2;
-  font-size: max(12px, calc(var(--u) * 11));
+  font-size: max(12px, calc(var(--u) * 13));
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -52,7 +51,7 @@
   display: flex;
   align-items: baseline;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: calc(var(--u) * 44);
+  font-size: calc(var(--u) * 50);
   font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -82,7 +81,7 @@
   align-items: center;
   gap: 0.5em;
   color: #9aa3b2;
-  font-size: max(12px, calc(var(--u) * 11));
+  font-size: max(12px, calc(var(--u) * 13));
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -182,13 +181,13 @@
   display: flex;
   justify-content: space-between;
   color: #7c8696;
-  font-size: max(11px, calc(var(--u) * 8));
+  font-size: max(11px, calc(var(--u) * 11));
   line-height: 1;
   white-space: nowrap;
 }
 
 /* Short boxes have no room for the time caption. */
-@container (max-height: 170px) {
+@container (max-height: 140px) {
   .axis {
     display: none;
   }
@@ -198,7 +197,7 @@
 @container (max-aspect-ratio: 16 / 10) {
   .panel {
     --u: min(1cqw, 1cqh);
-    padding: calc(var(--u) * 7);
+    padding: 0;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto auto minmax(0, 1fr);
     grid-template-areas:

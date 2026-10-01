@@ -30,9 +30,11 @@ const LOADING_GRACE_MS = 10_000;
 const CANDLE_TTL_MS = 30_000;
 const BAR_MS = 3 * 60_000;
 const REST_POLL_MS = 30_000;
+const REST_RETRY_MIN_MS = 5_000;
 const REST_REFRESH_MS = 5 * 60_000;
 const WS_PING_MS = 20_000;
 const WS_SILENT_MS = 45_000;
+const WS_CONNECT_TIMEOUT_MS = 10_000;
 const WS_RETRY_MIN_MS = 1_000;
 const WS_RETRY_MAX_MS = 30_000;
 const PREFETCH_ATTEMPTS = 3;
@@ -97,6 +99,8 @@ export function MarketsProvider({ children, featureMs = FEATURE_MS }: { children
     let backoff = WS_RETRY_MIN_MS;
     let lastMessageAt = 0;
     let lastRestAt = 0;
+    let nextRestAt = 0;
+    let restFailures = 0;
     let restBusy = false;
     let retryTimer: number | undefined;
 
@@ -122,9 +126,13 @@ export function MarketsProvider({ children, featureMs = FEATURE_MS }: { children
         }
         for (const coin of result.delisted) { delisted.add(coin); quotes.delete(coin); }
         lastRestAt = Date.now();
+        nextRestAt = lastRestAt + REST_POLL_MS;
+        restFailures = 0;
         if (!hadData) publish();
       } catch {
-        // Unreachable: quotes age out and the next poll tries again.
+        // Unreachable: quotes age out and the next poll tries again, backing off from 5 to 30 seconds.
+        nextRestAt = Date.now() + Math.min(REST_POLL_MS, REST_RETRY_MIN_MS * 2 ** restFailures);
+        restFailures += 1;
       } finally {
         restBusy = false;
       }
@@ -142,7 +150,10 @@ export function MarketsProvider({ children, featureMs = FEATURE_MS }: { children
       let ws: WebSocket;
       try { ws = new WebSocket(HL_WS_URL); } catch { reconnect(); return; }
       socket = ws;
+      // A connection attempt can hang without ever failing; give up on it and try again.
+      const opening = window.setTimeout(() => { if (ws.readyState === WebSocket.CONNECTING) ws.close(); }, WS_CONNECT_TIMEOUT_MS);
       ws.onopen = () => {
+        window.clearTimeout(opening);
         lastMessageAt = Date.now();
         for (const asset of ASSETS) ws.send(JSON.stringify({ method: "subscribe", subscription: { type: "activeAssetCtx", coin: asset.coin } }));
       };
@@ -159,7 +170,10 @@ export function MarketsProvider({ children, featureMs = FEATURE_MS }: { children
         backoff = WS_RETRY_MIN_MS;
       };
       ws.onerror = () => { try { ws.close(); } catch { /* already closed */ } };
-      ws.onclose = () => { if (socket === ws) { socket = null; reconnect(); } };
+      ws.onclose = () => {
+        window.clearTimeout(opening);
+        if (socket === ws) { socket = null; reconnect(); }
+      };
     };
 
     const socketLive = () => socket?.readyState === WebSocket.OPEN && Date.now() - lastMessageAt < WS_SILENT_MS;
@@ -168,8 +182,9 @@ export function MarketsProvider({ children, featureMs = FEATURE_MS }: { children
     const startTimer = window.setTimeout(() => { void refresh(); connect(); }, 0);
     const flushTimer = window.setInterval(publish, PRICE_FLUSH_MS);
     const restTimer = window.setInterval(() => {
-      if (!socketLive() || Date.now() - lastRestAt > REST_REFRESH_MS) void refresh();
-    }, REST_POLL_MS);
+      const due = socketLive() ? Math.max(nextRestAt, lastRestAt + REST_REFRESH_MS) : nextRestAt;
+      if (Date.now() >= due) void refresh();
+    }, REST_RETRY_MIN_MS);
     // Hyperliquid drops idle sockets, so ping; a socket that has gone silent is replaced.
     const pingTimer = window.setInterval(() => {
       if (socket?.readyState !== WebSocket.OPEN) return;
