@@ -9,7 +9,6 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "lightweight-charts": "^5.2.1",
     "lucide-react": "^0.468.0",
     "next": "^15.5.0",
     "react": "^19.0.0",

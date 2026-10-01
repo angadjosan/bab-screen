@@ -55,11 +55,29 @@ p {
   row-gap: 24px;
 }
 
-/* Row 1: ticker tape across the full width. */
-.tape-slot {
+/* Row 1: the B@B mark at the left edge, then the ticker tape in the width that is left. */
+.top-row {
   grid-column: 1 / -1;
   grid-row: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.brand-logo {
+  flex: none;
+  display: block;
+  /* 344x311 artwork at the row's 56px height is 61.94px wide; a whole-pixel box keeps the tape's left edge on the pixel grid. */
+  width: 62px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.tape-slot {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
 }
 
 /* Left column: featured market (header above its chart). */

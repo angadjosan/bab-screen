@@ -155,7 +155,7 @@
   font: 400 64px/1 var(--mk-sans);
 }
 
-/* Candle chart: Lightweight Charts draws into .chartHost and takes its font and colours from it. */
+/* Chart: TradingView widget frames stacked on one another, with TradingView's credit line beneath. */
 .chart,
 .chartEmpty {
   min-width: 0;
@@ -163,26 +163,54 @@
 }
 
 .chart {
-  position: relative;
-}
-
-.chartHost {
-  position: absolute;
-  inset: 0;
-  font-family: var(--mk-mono);
-}
-
-.chartNote,
-.chartEmpty {
   display: grid;
-  place-items: center;
-  color: var(--mk-muted);
-  font: 400 28px/1 var(--mk-sans);
+  grid-template-rows: minmax(0, 1fr) 24px;
+  row-gap: 4px;
 }
 
-.chartNote {
+.chartFrames {
+  position: relative;
+  min-height: 0;
+}
+
+/*
+ * The widget has no text-size option and draws 12px labels, too small for a TV. Chrome's zoom lays the frame's
+ * page out at 1/1.8 of the box and draws it 1.8 times as large, still pixel-sharp. The zoom also decides how
+ * many candles fit across: at 1.8 it is about 96, which with 15-minute candles (CHART_INTERVAL in
+ * lib/markets.ts) is the last 24 hours. The background keeps a frame opaque while its page is on the way,
+ * so the one loading underneath never shows through.
+ */
+.chartFrame {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #0b0e13;
+  zoom: 1.8;
+  pointer-events: none;
+}
+
+.chartFront {
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.chartCredit {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--mk-faint);
+  font: 400 16px/24px var(--mk-sans);
+  white-space: nowrap;
+}
+
+.chartCredit a {
+  color: inherit;
+  text-decoration: none;
 }
 
 .chartEmpty {
