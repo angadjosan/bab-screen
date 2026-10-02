@@ -21,6 +21,7 @@ type Ok = Extract<CoinFlipView, { status: "ok" }>;
 type Game = NonNullable<Ok["game"]>;
 type Phase = "flip" | "landed" | "leaving";
 
+const cue = (name: "start" | "toss" | "land") => void fetch(`/api/coin-flip/sound?cue=${name}`, { method: "POST" }).catch(() => {});
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 const money = (usd: number) => `$${usd.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(usd) ? 0 : 2, maximumFractionDigits: 2 })}`;
 const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
@@ -89,10 +90,15 @@ export function CoinFlip() {
   useEffect(() => {
     if (!gameId) return;
     setPhase("flip");
+    cue("start");
     const leave = window.setTimeout(() => setPhase("leaving"), MAX_SHOW_MS);
     return () => window.clearTimeout(leave);
   }, [gameId]);
-  const land = useCallback(() => setPhase((now) => (now === "flip" ? "landed" : now)), []);
+  const toss = useCallback(() => cue("toss"), []);
+  const land = useCallback(() => {
+    cue("land");
+    setPhase((now) => (now === "flip" ? "landed" : now));
+  }, []);
 
   useEffect(() => {
     if (!paid) return;
@@ -134,7 +140,7 @@ export function CoinFlip() {
           <p className={styles.kicker}>Coin flip · {money(game.stakeUsd)} each</p>
           <div className={styles.table}>
             <Player game={game} side="heads" landed={landed} />
-            <div className={styles.toss}><CoinToss winner={game.winner} onLand={land} /></div>
+            <div className={styles.toss}><CoinToss winner={game.winner} onToss={toss} onLand={land} /></div>
             <Player game={game} side="tails" landed={landed} />
           </div>
           <p className={styles.result}>{landed ? `${game.winner === "heads" ? "Heads" : "Tails"} wins ${pot}` : ""}</p>

@@ -196,10 +196,11 @@ function draw(ctx: CanvasRenderingContext2D, t: number, tails: boolean, mark: Lo
   });
 }
 
-export function CoinToss({ winner, onLand }: { winner: Side; onLand: () => void }) {
+/** onToss is called as the coin leaves for the air, onLand once it has fallen flat. */
+export function CoinToss({ winner, onToss, onLand }: { winner: Side; onToss: () => void; onLand: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const landed = useRef(onLand);
-  landed.current = onLand;
+  const told = useRef({ onToss, onLand });
+  told.current = { onToss, onLand };
 
   useEffect(() => {
     const element = canvas.current;
@@ -212,16 +213,13 @@ export function CoinToss({ winner, onLand }: { winner: Side; onLand: () => void 
     let mark: Logo | null = null;
     loadLogo().then((loaded) => { mark = loaded; }, () => {});
     const start = performance.now();
-    let told = false;
+    const pending = [[HOLD + WINDUP, "onToss"], [HOLD + WINDUP + FLIGHT + LANDED_AFTER, "onLand"]] as [number, "onToss" | "onLand"][];
     let frame = 0;
     const tick = () => {
       const t = (performance.now() - start) / 1000;
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       draw(ctx, t, winner === "tails", mark);
-      if (!told && t >= HOLD + WINDUP + FLIGHT + LANDED_AFTER) {
-        told = true;
-        landed.current();
-      }
+      while (pending.length && t >= pending[0][0]) told.current[pending.shift()![1]]();
       if (t < HOLD + WINDUP + FLIGHT + LANDED_AFTER + SPARKLE + .1) frame = requestAnimationFrame(tick);
     };
     tick();
