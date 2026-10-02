@@ -174,7 +174,7 @@ export async function recordJamTrigger(trigger: {
 let lastQr: { url: string; qr: JamQr } | null = null;
 
 /** Error correction M (15%): a low-density code with larger modules reads from further away than a denser, more redundant one. */
-function buildQr(url: string): JamQr {
+export function buildQr(url: string): JamQr {
   if (lastQr?.url === url) return lastQr.qr;
   const code = qrcode(0, "M");
   code.addData(url, "Byte");
