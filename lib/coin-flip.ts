@@ -22,7 +22,7 @@ const TICK_MS = 3_000;
 const WAIT_MS = 10 * 60_000;
 /** The payout is held this long so the chain does not show the winner before the coin lands. */
 const REVEAL_MS = 8_000;
-const GAME_SHOW_MS = 60_000;
+const GAME_SHOW_MS = 120_000;
 const RESEND_MS = 20_000;
 const LOST_MS = 2 * 60_000;
 const CONFIRMATIONS = 2n;
@@ -46,7 +46,7 @@ export type CoinFlipView =
       minUsd: number;
       maxUsd: number;
       waiting: { from: Address; usd: number; remainingMs: number } | null;
-      game: { id: string; heads: Address; tails: Address; stakeUsd: number; winner: Side; ageMs: number; payoutHash: Hex | null } | null;
+      game: { id: string; heads: Address; tails: Address; stakeUsd: number; winner: Side; ageMs: number; payout: { url: string; qr: JamQr } | null } | null;
       problem: string | null;
     };
 
@@ -58,7 +58,7 @@ function config() {
   const account = privateKeyToAccount((key.startsWith("0x") ? key : `0x${key}`) as Hex);
   const transport = http(process.env.COIN_FLIP_RPC_URL?.trim() || undefined);
   const max = Number(process.env.COIN_FLIP_MAX_USD);
-  return { name, label, token, account, maxUsd: max >= MIN_USD ? max : 25, reader: createPublicClient({ chain, transport }), wallet: createWalletClient({ account, chain, transport }) };
+  return { name, label, token, account, explorer: chain.blockExplorers?.default.url ?? "https://basescan.org", maxUsd: max >= MIN_USD ? max : 25, reader: createPublicClient({ chain, transport }), wallet: createWalletClient({ account, chain, transport }) };
 }
 
 async function load(cfg: Config): Promise<State> {
@@ -154,7 +154,8 @@ export async function getCoinFlipView(): Promise<CoinFlipView> {
   const state = await load(cfg);
   const now = Date.now();
   const { waiting, game } = state;
-  const payout = game && state.transfers.find((t) => t.id === `payout:${game.id}`);
+  const paid = game && state.transfers.find((t) => t.id === `payout:${game.id}` && t.done && t.hash);
+  const receipt = paid ? `${cfg.explorer}/tx/${paid.hash}` : null;
   return {
     status: "ok",
     address: cfg.account.address,
@@ -164,7 +165,7 @@ export async function getCoinFlipView(): Promise<CoinFlipView> {
     maxUsd: cfg.maxUsd,
     waiting: waiting && { from: waiting.from, usd: dollars(waiting.amount), remainingMs: Math.max(0, waiting.at + WAIT_MS - now) },
     game: game && now - game.at < GAME_SHOW_MS
-      ? { id: game.id, heads: game.heads, tails: game.tails, stakeUsd: dollars(game.stake), winner: game.winner, ageMs: now - game.at, payoutHash: (payout?.done && payout.hash) || null }
+      ? { id: game.id, heads: game.heads, tails: game.tails, stakeUsd: dollars(game.stake), winner: game.winner, ageMs: now - game.at, payout: receipt ? { url: receipt, qr: buildQr(receipt) } : null }
       : null,
     problem: state.problem ?? shared.coinFlipError ?? null,
   };

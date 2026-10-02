@@ -192,7 +192,7 @@ Rules (`lib/coin-flip.ts`):
 
 Every transfer is signed and written to `.data/coin-flip.json` before it is broadcast, and only one is in flight at a time, so after a crash or restart the server can only send the same transaction again and it can only land once. If a transfer never lands, the file's `problem` field says which, and the tile says it is not watching for deposits. `COIN_FLIP_CHAIN=base-sepolia` runs it on the test network with Circle's test USDC, and `COIN_FLIP_RPC_URL` replaces the public RPC.
 
-`app/CoinFlip.tsx` has the tile and the full-screen flip. Add `?coinflip=demo` to the address to play the animation with made-up players every 20 seconds.
+`app/CoinFlip.tsx` has the tile and the full-screen flip: the coin is tossed, turns end over end and bounces to rest on the winning side (the B@B mark is heads, the dollar sign tails). Once the payout has confirmed, a QR code of the transaction on the block explorer is shown bottom right for 20 seconds; if it has not confirmed within a minute the stage closes without one. Add `?coinflip=demo` to the address to play the animation with made-up players, with the wallet's QR standing in for the receipt.
 
 ## Background waves
 
