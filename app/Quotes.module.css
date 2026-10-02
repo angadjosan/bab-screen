@@ -13,16 +13,11 @@
   background: var(--bab-surface-1);
 }
 
-/* A photo of people fills the frame, in full colour: no filter, tint or overlay. */
+/* A photo or a screenshot is shown whole, on the frame's ground, in full colour: no crop, filter, tint or overlay. */
 .frameImage {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-}
-
-/* A screenshot is mostly text, and a crop would cut through it: shown whole, on the frame's ground. */
-.frameImageWhole {
   object-fit: contain;
 }
 

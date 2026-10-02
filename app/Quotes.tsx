@@ -290,8 +290,7 @@ export type QuoteFrameProps = {
  * What goes in the carousel's image frame for one quote. It covers its positioned parent
  * (position: absolute; inset: 0), exactly like a spotted photo.
  *
- * With a picture: the picture. A "photo" fills the frame (cover); a "screenshot" is shown whole
- * (contain) on the frame's dark ground, because cropping a screenshot cuts through its text.
+ * With a picture: the picture, shown whole (contain) on the frame's dark ground, never cropped.
  * Without one: the words, in EB Garamond, as large as fits.
  */
 export function QuoteFrame({ quote, className, style, onImageError }: QuoteFrameProps) {
@@ -302,7 +301,7 @@ export function QuoteFrame({ quote, className, style, onImageError }: QuoteFrame
     <div className={cx(styles.frame, className)} style={style}>
       {imageUrl ? (
         <img
-          className={cx(styles.frameImage, quote.imageKind === "screenshot" && styles.frameImageWhole)}
+          className={styles.frameImage}
           src={imageUrl}
           alt={quote.text ?? (quote.who ? `Quote from ${quote.who}` : "Quote posted in Slack")}
           draggable={false}
