@@ -27,3 +27,6 @@ id_ed25519*
 # OS / logs
 .DS_Store
 *.log
+
+# local runtime state (Spotify tokens, song request cursor)
+.data

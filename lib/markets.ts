@@ -1,146 +1,218 @@
-// Market definitions and Hyperliquid helpers shared by app/Markets.tsx.
-// Everything comes from Hyperliquid's public API (no key): the main perp dex for crypto,
-// trade.xyz's HIP-3 dex ("xyz") for the S&P 500 and stocks, EntropyIO's ("io") for the pre-IPO markets.
+// Market definitions and price-source helpers shared by app/Markets.tsx.
+//
+// Two lists share the tape and the featured slot: the set tokens below, which are always on, and the newsworthy
+// tokens that /api/newsworthy hands the page at runtime (lib/newsworthy.ts). Prices are read in the browser, no
+// key needed, from one of two venues: Hyperliquid's perpetual market for the token (WebSocket, with REST as
+// the backstop), or, for a token Hyperliquid does not list, Gate's spot market against USDT (REST, polled).
+// The featured chart is TradingView's Advanced Chart widget showing that same market.
 
-export type AssetKind = "crypto" | "index" | "stock" | "preipo";
+export type Venue = "hyperliquid" | "gate";
 
 export type Asset = {
   /** Symbol shown on screen. */
   symbol: string;
   name: string;
-  /** Hyperliquid coin id. HIP-3 markets are prefixed with their dex, e.g. "xyz:NVDA". */
+  venue: Venue;
+  /** The market's id at its venue: a Hyperliquid coin ("BTC", "kPEPE") or a Gate currency pair ("RAIN_USDT"). */
+  market: string;
+  /** Unique key on this page for quotes, charts and the rotation. A Hyperliquid coin id is its own key. */
   coin: string;
-  kind: AssetKind;
-  /** "usd-billions": the contract is quoted in billions of dollars of implied company valuation. */
-  unit: "usd" | "usd-billions";
+  /**
+   * Tokens per contract. Hyperliquid quotes its "k" markets (kSHIB, kPEPE, kBONK) per 1,000 tokens;
+   * prices are divided by this as they are read, so the tape and header are per token.
+   * TradingView's chart cannot be rescaled and stays per contract.
+   */
+  lot: number;
+  /** The same market on TradingView. A market whose chart will not load is left out of the featured slot. */
+  tv: string;
 };
 
-const crypto = (symbol: string, name: string): Asset => ({ symbol, name, coin: symbol, kind: "crypto", unit: "usd" });
-const stock = (symbol: string, name: string): Asset => ({ symbol, name, coin: `xyz:${symbol}`, kind: "stock", unit: "usd" });
+const HL_COIN = /^[A-Za-z0-9]{1,12}$/;
+const GATE_PAIR = /^[A-Z0-9]{1,12}_USDT$/;
 
-// Order is the rotation order and the tape order.
-export const ASSETS: readonly Asset[] = [
-  crypto("BTC", "Bitcoin"),
-  crypto("ETH", "Ethereum"),
-  crypto("SOL", "Solana"),
-  crypto("HYPE", "Hyperliquid"),
-  crypto("XMR", "Monero"),
-  crypto("ZEC", "Zcash"),
-  crypto("BNB", "BNB"),
-  crypto("XRP", "XRP"),
-  crypto("TRX", "TRON"),
-  crypto("ADA", "Cardano"),
-  crypto("XLM", "Stellar"),
-  crypto("NEAR", "NEAR Protocol"),
-  crypto("BCH", "Bitcoin Cash"),
-  crypto("LTC", "Litecoin"),
-  { symbol: "SP500", name: "S&P 500 perp", coin: "xyz:SP500", kind: "index", unit: "usd" },
-  stock("NVDA", "Nvidia"),
-  stock("AAPL", "Apple"),
-  stock("MSFT", "Microsoft"),
-  stock("GOOGL", "Alphabet"),
-  stock("AMZN", "Amazon"),
-  stock("META", "Meta"),
-  stock("TSLA", "Tesla"),
-  { symbol: "OPENAI", name: "OpenAI implied valuation", coin: "io:OAI", kind: "preipo", unit: "usd-billions" },
-  { symbol: "ANTHROPIC", name: "Anthropic implied valuation", coin: "io:ANTH", kind: "preipo", unit: "usd-billions" },
+/** A market as the page tracks it, or null if the venue's id is not one this page knows how to read. */
+export function makeAsset(venue: Venue, market: string, symbol: string, name: string, lot = 1): Asset | null {
+  if (!Number.isFinite(lot) || lot < 1) return null;
+  if (venue === "hyperliquid") {
+    if (!HL_COIN.test(market)) return null;
+    return { symbol, name, venue, market, coin: market, lot, tv: `HYPERLIQUID:${market.toUpperCase()}USDC.P` };
+  }
+  if (venue !== "gate" || !GATE_PAIR.test(market)) return null;
+  return { symbol, name, venue, market, coin: `gate:${market}`, lot, tv: `GATE:${market.replace("_", "")}` };
+}
+
+const hyperliquid = (symbol: string, name: string): Asset => makeAsset("hyperliquid", symbol, symbol, name) as Asset;
+const gate = (symbol: string, name: string): Asset => makeAsset("gate", `${symbol}_USDT`, symbol, name) as Asset;
+
+/**
+ * The set tokens: always on the tape and in the featured rotation, in this order.
+ * RAIN (Rain protocol, rain.one) has no Hyperliquid perpetual, and its Hyperliquid spot listing does not trade
+ * (no asks, no volume, a mark 6% off the market; checked 2026-10-01), so its price and chart are Gate's
+ * RAIN/USDT spot market.
+ */
+export const SET_ASSETS: readonly Asset[] = [
+  hyperliquid("HYPE", "Hyperliquid"),
+  hyperliquid("SOL", "Solana"),
+  hyperliquid("ETH", "Ethereum"),
+  hyperliquid("BTC", "Bitcoin"),
+  hyperliquid("XMR", "Monero"),
+  hyperliquid("ZEC", "Zcash"),
+  hyperliquid("NEAR", "NEAR Protocol"),
+  hyperliquid("XRP", "XRP"),
+  gate("RAIN", "Rain"),
+  hyperliquid("XLM", "Stellar"),
 ];
 
 export const HL_INFO_URL = "https://api.hyperliquid.xyz/info";
 export const HL_WS_URL = "wss://api.hyperliquid.xyz/ws";
-/** Perp dexes the asset list draws on; "" is Hyperliquid's own. */
-export const HL_DEXES: readonly string[] = [...new Set(ASSETS.map((a) => (a.coin.includes(":") ? a.coin.split(":")[0] : "")))];
+/** Gate's public spot API: no key, any origin, 200 requests per 10 seconds per address. */
+export const GATE_TICKERS_URL = "https://api.gateio.ws/api/v4/spot/tickers";
 
-export const CANDLE_WINDOW_MS = 4 * 60 * 60_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 
 export type Quote = { price: number; changePct: number; at: number };
-export type Candle = { time: number; open: number; high: number; low: number; close: number };
+export type Quotes = { quotes: Map<string, Quote>; delisted: Set<string> };
 
 type RawCtx = { markPx?: string | null; prevDayPx?: string | null };
 type RawMeta = { universe?: { name?: string; isDelisted?: boolean }[] };
-type RawCandle = { t?: number; o?: string; h?: string; l?: string; c?: string };
+type RawGateTicker = { currency_pair?: string; last?: string; change_percentage?: string };
 
 /** Mark price and change against the price 24 hours ago, from a Hyperliquid asset context. */
-export function quoteFromCtx(ctx: unknown, at: number): Quote | null {
+export function quoteFromCtx(asset: Pick<Asset, "lot">, ctx: unknown, at: number): Quote | null {
   if (!ctx || typeof ctx !== "object") return null;
   const { markPx, prevDayPx } = ctx as RawCtx;
-  const price = Number(markPx);
-  const prev = Number(prevDayPx);
+  const price = Number(markPx) / asset.lot;
+  const prev = Number(prevDayPx) / asset.lot;
   if (!Number.isFinite(price) || price <= 0) return null;
   return { price, changePct: Number.isFinite(prev) && prev > 0 ? ((price - prev) / prev) * 100 : 0, at };
 }
 
-async function info<T>(body: unknown): Promise<T> {
+/** Quotes for the Hyperliquid markets among `assets`, and those the exchange has delisted or does not list. One request. */
+export async function fetchHyperliquidQuotes(assets: readonly Asset[]): Promise<Quotes> {
+  const wanted = new Map(assets.filter((a) => a.venue === "hyperliquid").map((a) => [a.market, a]));
+  const quotes = new Map<string, Quote>();
+  const delisted = new Set<string>();
+  if (!wanted.size) return { quotes, delisted };
   const response = await fetch(HL_INFO_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ type: "metaAndAssetCtxs" }),
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Hyperliquid returned ${response.status}`);
-  return (await response.json()) as T;
-}
-
-/** One request per dex. Returns quotes for the listed assets and the coins the exchange has delisted. */
-export async function fetchQuotes(): Promise<{ quotes: Map<string, Quote>; delisted: Set<string> }> {
-  const wanted = new Set(ASSETS.map((a) => a.coin));
-  const quotes = new Map<string, Quote>();
-  const delisted = new Set<string>();
-  const results = await Promise.allSettled(HL_DEXES.map((dex) => info<[RawMeta, unknown[]]>({ type: "metaAndAssetCtxs", dex })));
+  const body = (await response.json()) as [RawMeta, unknown[]];
+  if (!Array.isArray(body) || !Array.isArray(body[0]?.universe)) throw new Error("Hyperliquid sent an unexpected reply");
+  const [meta, ctxs] = body;
   const at = Date.now();
-  let failures = 0;
-  for (const result of results) {
-    if (result.status !== "fulfilled" || !Array.isArray(result.value)) { failures += 1; continue; }
-    const [meta, ctxs] = result.value;
-    (meta?.universe ?? []).forEach((entry, i) => {
-      const coin = entry?.name;
-      if (!coin || !wanted.has(coin)) return;
-      const quote = entry.isDelisted ? null : quoteFromCtx(ctxs?.[i], at);
-      if (quote) quotes.set(coin, quote); else delisted.add(coin);
-    });
-  }
-  if (failures === results.length) throw new Error("Hyperliquid is unreachable");
+  const listed = new Set<string>();
+  (meta.universe ?? []).forEach((entry, i) => {
+    const asset = entry?.name ? wanted.get(entry.name) : undefined;
+    if (!asset) return;
+    listed.add(asset.market);
+    const quote = entry.isDelisted ? null : quoteFromCtx(asset, ctxs?.[i], at);
+    if (quote) quotes.set(asset.coin, quote); else delisted.add(asset.coin);
+  });
+  for (const asset of wanted.values()) if (!listed.has(asset.market)) delisted.add(asset.coin);
   return { quotes, delisted };
 }
 
-/** The last four hours of one-minute candles, oldest first. */
-export async function fetchCandles(coin: string): Promise<Candle[]> {
-  const endTime = Date.now();
-  const raw = await info<RawCandle[]>({ type: "candleSnapshot", req: { coin, interval: "1m", startTime: endTime - CANDLE_WINDOW_MS, endTime } });
-  if (!Array.isArray(raw)) throw new Error("Invalid candle data");
-  return raw
-    .map((c) => ({ time: Number(c?.t), open: Number(c?.o), high: Number(c?.h), low: Number(c?.l), close: Number(c?.c) }))
-    .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite) && c.low > 0)
-    .sort((a, b) => a.time - b.time);
+/**
+ * Quotes for the Gate markets among `assets`: last trade and Gate's own 24-hour change. One small request per
+ * market, since the alternative is the 500 kB list of every pair. Rejects only when none could be read.
+ */
+export async function fetchGateQuotes(assets: readonly Asset[]): Promise<Quotes> {
+  const wanted = assets.filter((a) => a.venue === "gate");
+  const quotes = new Map<string, Quote>();
+  const delisted = new Set<string>();
+  let failures = 0;
+  await Promise.all(wanted.map(async (asset) => {
+    try {
+      const response = await fetch(`${GATE_TICKERS_URL}?currency_pair=${encodeURIComponent(asset.market)}`, { cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      // 400 is Gate's answer for a pair it does not have (any more).
+      if (response.status === 400) { delisted.add(asset.coin); return; }
+      if (!response.ok) throw new Error(`Gate returned ${response.status}`);
+      const body = (await response.json()) as RawGateTicker[];
+      const ticker = Array.isArray(body) ? body.find((entry) => entry?.currency_pair === asset.market) : undefined;
+      const price = Number(ticker?.last) / asset.lot;
+      const changePct = Number(ticker?.change_percentage);
+      if (!ticker || !Number.isFinite(price) || price <= 0) { delisted.add(asset.coin); return; }
+      quotes.set(asset.coin, { price, changePct: Number.isFinite(changePct) ? changePct : 0, at: Date.now() });
+    } catch {
+      failures += 1;
+    }
+  }));
+  if (wanted.length && failures === wanted.length) throw new Error("Gate is unreachable");
+  return { quotes, delisted };
 }
 
-/** Decimals that keep a price readable at any magnitude: $83,852 / $2,696.60 / $1.5024 / $0.25175. */
+/** Decimals that keep a price readable at any magnitude: $83,852 / $2,696.60 / $1.5024 / $0.25175 / $0.000005835. */
 export function priceDecimals(value: number) {
   const v = Math.abs(value);
   if (v >= 10_000) return 0;
   if (v >= 10) return 2;
   if (v >= 1) return 4;
   if (v >= 0.01) return 5;
-  return 6;
+  // Four significant digits, which is as fine as Hyperliquid quotes such prices.
+  return v > 0 ? Math.min(12, Math.ceil(-Math.log10(v)) + 3) : 2;
 }
 
-export function formatPrice(asset: Pick<Asset, "unit">, value: number, decimals?: number) {
+export function formatPrice(value: number, decimals?: number) {
   if (!Number.isFinite(value)) return "--";
-  if (asset.unit === "usd-billions") {
-    const trillions = Math.abs(value) >= 1000;
-    return `$${(trillions ? value / 1000 : value).toFixed(decimals ?? (trillions ? 3 : 1))}${trillions ? "T" : "B"}`;
-  }
   const digits = decimals ?? priceDecimals(value);
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
-/** Decimals for a price scale whose labels are `step` apart (`top` is the largest label). */
-export function scaleDecimals(asset: Pick<Asset, "unit">, step: number, top: number) {
-  const scaled = asset.unit === "usd-billions" && Math.abs(top) >= 1000 ? step / 1000 : step;
-  if (!(scaled > 0)) return undefined;
-  return Math.max(0, Math.min(6, Math.ceil(-Math.log10(scaled)) + 1));
+/** Where TradingView serves its embeddable widgets from, and what they post to the page as. */
+export const TV_WIDGET_ORIGIN = "https://www.tradingview-widget.com";
+/**
+ * Candle width on the featured chart, in minutes. The widget has no "last 24 hours" setting (its "1D" range is
+ * the day so far, from midnight UTC), so the window comes from how many candles fit: 48 of these across the
+ * chart box at the zoom set in Markets.module.css is 24 hours. Change the two together, and with the column width.
+ */
+export const CHART_INTERVAL = "30";
+/**
+ * The chart is drawn inside TradingView's frame, which cannot read the page's CSS variables, so the two brand
+ * colours it needs are repeated here: --bab-black (the canvas) and --bab-line (hairline rules) from app/brand.css.
+ * The candle colours are TradingView's own; the widget offers no setting for them.
+ */
+const CHART_BACKGROUND = "#0C0C0C";
+const CHART_GRID = "#2A2A2A";
+
+/**
+ * The frame address for TradingView's Advanced Chart widget, bare: candles and volume, nothing to click.
+ * This is the address TradingView's own embed script (embed-widget-advanced-chart.js) builds; the frame is
+ * created directly because that script leaves a listener behind on every use, and the chart changes all day.
+ */
+export function chartUrl(symbol: string) {
+  const page = window.location;
+  const settings = {
+    autosize: true,
+    symbol,
+    interval: CHART_INTERVAL,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    backgroundColor: CHART_BACKGROUND,
+    gridColor: CHART_GRID,
+    hide_top_toolbar: true,
+    hide_side_toolbar: true,
+    hide_legend: true,
+    hide_volume: false,
+    allow_symbol_change: false,
+    save_image: false,
+    withdateranges: false,
+    details: false,
+    hotlist: false,
+    calendar: false,
+    support_host: "https://www.tradingview.com",
+    utm_source: page.hostname,
+    utm_medium: "widget_new",
+    utm_campaign: "advanced-chart",
+    "page-uri": `${page.host}${page.pathname}`,
+  };
+  return `${TV_WIDGET_ORIGIN}/embed-widget/advanced-chart/?locale=en#${encodeURIComponent(JSON.stringify(settings))}`;
 }
 
 export function formatChange(pct: number) {
