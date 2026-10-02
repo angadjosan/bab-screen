@@ -1,4 +1,4 @@
-// Fetchers for the feed's sources: RSS/Atom, Hacker News, Bluesky and X. Each returns a
+// Fetchers for the feed's sources: RSS/Atom, Hacker News and Bluesky. Each returns a
 // SourceResult and never throws, so one broken source cannot sink a refresh.
 
 import {
@@ -10,7 +10,6 @@ import {
   MAX_AGE_HOURS,
   NEWS_FEEDS,
   USER_AGENT,
-  X,
   type RssSource,
 } from "./feed-sources";
 import { canonicalUrl, clip, decodeEntities, httpsImage, makeId, parseFeed, rejectReason, tidy } from "./feed-parse";
@@ -32,29 +31,9 @@ export type SourceCache = {
   items: FeedItem[];
 };
 
-/** X state that survives restarts: lookups and reads cost money, so nothing is fetched twice. */
-export type XState = {
-  /** Lower-cased handle -> account. */
-  users: Record<string, { id: string; name: string; username: string }>;
-  /** User id -> newest post id seen. */
-  sinceIds: Record<string, string>;
-  posts: FeedItem[];
-  /** UTC day (YYYY-MM-DD) the read counter belongs to. */
-  day: string;
-  readsToday: number;
-  fetchedAt: number;
-  /** Handles X did not recognise. */
-  unknown: string[];
-};
-
-export function emptyXState(): XState {
-  return { users: {}, sinceIds: {}, posts: [], day: "", readsToday: 0, fetchedAt: 0, unknown: [] };
-}
-
 export type FetchContext = {
   now: number;
   caches: Map<string, SourceCache>;
-  x: XState;
 };
 
 const POST_MAX = 400;
@@ -314,205 +293,6 @@ async function fetchBluesky(context: FetchContext): Promise<SourceResult> {
   };
 }
 
-// --- X -------------------------------------------------------------------------------------------
-
-const X_TWEET_FIELDS = "tweet.fields=created_at,author_id,lang,possibly_sensitive,referenced_tweets,note_tweet,entities,attachments";
-const X_EXPANSIONS = "expansions=author_id,attachments.media_keys&user.fields=name,username&media.fields=type,url,preview_image_url";
-
-export function xConfig(): { token: string | null; listId: string | null; maxReadsPerDay: number } {
-  const token = process.env.X_BEARER_TOKEN?.trim() || null;
-  const list = (process.env.X_LIST_ID ?? X.listId).trim();
-  const budget = Number(process.env.X_MAX_READS_PER_DAY);
-  return {
-    token,
-    listId: /^\d+$/.test(list) ? list : null,
-    maxReadsPerDay: Number.isFinite(budget) && budget >= 0 ? Math.floor(budget) : X.maxReadsPerDay,
-  };
-}
-
-function xPostText(tweet: Record<string, unknown>): string {
-  const note = isRecord(tweet.note_tweet) ? tweet.note_tweet : null;
-  let body = text(note?.text) ?? text(tweet.text) ?? "";
-  const entities = isRecord(note?.entities) ? note.entities : isRecord(tweet.entities) ? tweet.entities : null;
-  const urls = entities && Array.isArray(entities.urls) ? entities.urls : [];
-  for (const entry of urls) {
-    if (!isRecord(entry)) continue;
-    const short = text(entry.url);
-    const expanded = text(entry.expanded_url) ?? "";
-    if (!short) continue;
-    // Links to the post's own media or to a quoted post add nothing on a wall; others show their host.
-    let replacement = "";
-    try {
-      const target = new URL(expanded);
-      const own = /(^|\.)(x|twitter)\.com$/i.test(target.hostname) && /\/(status|photo|video)\//.test(target.pathname);
-      if (!own) replacement = target.hostname.replace(/^www\./, "");
-    } catch {
-      replacement = "";
-    }
-    body = body.split(short).join(replacement);
-  }
-  return tidy(decodeEntities(body.replace(/https:\/\/t\.co\/\w+/g, "")));
-}
-
-/** Maps one X API v2 posts payload ({ data, includes }) to feed items. */
-function xPosts(payload: unknown, now: number): { items: FeedItem[]; reads: number; newestId: string | null } {
-  if (!isRecord(payload)) throw new HttpError("unexpected_shape");
-  const data = Array.isArray(payload.data) ? payload.data : [];
-  const includes = isRecord(payload.includes) ? payload.includes : {};
-  const users = new Map<string, { name: string; username: string }>();
-  for (const user of Array.isArray(includes.users) ? includes.users : []) {
-    if (isRecord(user) && text(user.id) && text(user.username)) {
-      users.set(String(user.id), { name: text(user.name) ?? String(user.username), username: String(user.username) });
-    }
-  }
-  const media = new Map<string, string>();
-  for (const entry of Array.isArray(includes.media) ? includes.media : []) {
-    if (!isRecord(entry) || !text(entry.media_key)) continue;
-    const image = httpsImage(text(entry.url) ?? text(entry.preview_image_url));
-    if (image) media.set(String(entry.media_key), image);
-  }
-  const items: FeedItem[] = [];
-  let newestId: string | null = null;
-  for (const tweet of data) {
-    if (!isRecord(tweet)) continue;
-    const id = text(tweet.id);
-    if (!id || !/^\d+$/.test(id)) continue;
-    if (!newestId || BigInt(id) > BigInt(newestId)) newestId = id;
-    const author = users.get(String(tweet.author_id));
-    const published = Date.parse(text(tweet.created_at) ?? "");
-    if (!author || !/^\w{1,15}$/.test(author.username) || !Number.isFinite(published)) continue;
-    if (tweet.possibly_sensitive === true) continue;
-    const references = Array.isArray(tweet.referenced_tweets) ? tweet.referenced_tweets : [];
-    if (references.some((reference) => isRecord(reference) && (reference.type === "retweeted" || reference.type === "replied_to"))) continue;
-    const lang = text(tweet.lang);
-    if (lang && !["en", "und", "qme", "zxx"].includes(lang)) continue;
-    const body = xPostText(tweet);
-    if (body.length < POST_MIN) continue;
-    const keys = isRecord(tweet.attachments) && Array.isArray(tweet.attachments.media_keys) ? tweet.attachments.media_keys : [];
-    const image = keys.map((key) => media.get(String(key))).find(Boolean) ?? null;
-    const item: FeedItem = {
-      id: makeId(X.name, id),
-      kind: "tweet",
-      source: X.name,
-      author: tidy(author.name),
-      handle: `@${author.username}`,
-      title: clip(body, POST_MAX),
-      summary: null,
-      url: `https://x.com/${author.username}/status/${id}`,
-      publishedAt: new Date(Math.min(published, now)).toISOString(),
-      imageUrl: image,
-    };
-    if (!rejectReason(item)) items.push(item);
-  }
-  return { items, reads: data.length, newestId };
-}
-
-function xError(error: unknown): string {
-  const code = errorCode(error);
-  if (code === "http_401") return "http_401 (X rejected X_BEARER_TOKEN)";
-  if (code === "http_402") return "http_402 (the X developer account has no credits)";
-  if (code === "http_403") return "http_403 (the X app may not read this; check its access level)";
-  if (code === "http_429") return "http_429 (X rate limit)";
-  return code;
-}
-
-async function fetchX(context: FetchContext): Promise<SourceResult> {
-  const name = X.name;
-  const config = xConfig();
-  if (!config.token) {
-    return { name, kind: "tweet", ok: false, items: [], error: "not configured: set X_BEARER_TOKEN (X has no free read tier)" };
-  }
-  const state = context.x;
-  const today = new Date(context.now).toISOString().slice(0, 10);
-  if (state.day !== today) {
-    state.day = today;
-    state.readsToday = 0;
-  }
-  const cached = () => {
-    state.posts = fresh(state.posts, context.now, X.maxAgeHours);
-    return state.posts;
-  };
-  if (state.fetchedAt && context.now - state.fetchedAt < X.everyMinutes * 60_000 - 30_000) {
-    return { name, kind: "tweet", ok: true, items: cached(), error: null };
-  }
-  const authorization = { Authorization: `Bearer ${config.token}` };
-  const remaining = () => config.maxReadsPerDay - state.readsToday;
-  const overBudget = `daily budget of ${config.maxReadsPerDay} post reads reached; resumes at 00:00 UTC`;
-  const merge = (items: FeedItem[]) => {
-    const known = new Set(state.posts.map((post) => post.id));
-    state.posts.push(...items.filter((item) => !known.has(item.id)));
-  };
-  try {
-    if (config.listId) {
-      const want = Math.min(X.postsPerList, remaining());
-      if (want < 1) return { name, kind: "tweet", ok: true, items: cached(), error: overBudget };
-      const payload = await getJson(`${X.api}/lists/${config.listId}/tweets?max_results=${want}&${X_TWEET_FIELDS}&${X_EXPANSIONS}`, authorization);
-      const { items, reads } = xPosts(payload, context.now);
-      state.readsToday += reads;
-      state.fetchedAt = context.now;
-      merge(items);
-      return { name, kind: "tweet", ok: true, items: cached(), error: null };
-    }
-
-    // Accounts mode. Handles are resolved to ids once and remembered.
-    const handles = X.accounts.map((handle) => handle.replace(/^@/, "").trim()).filter((handle) => /^\w{1,15}$/.test(handle));
-    const unresolved = handles.filter((handle) => !state.users[handle.toLowerCase()] && !state.unknown.includes(handle.toLowerCase()));
-    for (let at = 0; at < unresolved.length; at += 100) {
-      const batch = unresolved.slice(at, at + 100);
-      const payload = await getJson(`${X.api}/users/by?usernames=${batch.join(",")}&user.fields=name,username`, authorization);
-      const found = isRecord(payload) && Array.isArray(payload.data) ? payload.data : [];
-      for (const user of found) {
-        if (isRecord(user) && text(user.id) && text(user.username)) {
-          state.users[String(user.username).toLowerCase()] = { id: String(user.id), name: text(user.name) ?? String(user.username), username: String(user.username) };
-        }
-      }
-      for (const handle of batch) if (!state.users[handle.toLowerCase()]) state.unknown.push(handle.toLowerCase());
-    }
-
-    const accounts = handles.map((handle) => state.users[handle.toLowerCase()]).filter(Boolean);
-    const failures: string[] = [];
-    let stopped = false;
-    await mapLimit(accounts, 3, async (account) => {
-      // Each request can return postsPerAccount posts; stop before the budget can be overrun.
-      if (remaining() < X.postsPerAccount) {
-        stopped = true;
-        return;
-      }
-      state.readsToday += X.postsPerAccount; // reserved, corrected below
-      try {
-        const since = state.sinceIds[account.id];
-        const window = since ? `since_id=${since}` : `start_time=${new Date(context.now - X.maxAgeHours * 3_600_000).toISOString().replace(/\.\d+Z$/, "Z")}`;
-        const payload = await getJson(
-          `${X.api}/users/${account.id}/tweets?max_results=${X.postsPerAccount}&exclude=retweets,replies&${window}&${X_TWEET_FIELDS}&${X_EXPANSIONS}`,
-          authorization,
-        );
-        const { items, reads, newestId } = xPosts(payload, context.now);
-        state.readsToday += reads - X.postsPerAccount;
-        if (newestId) state.sinceIds[account.id] = newestId;
-        merge(items);
-      } catch (error) {
-        state.readsToday -= X.postsPerAccount;
-        failures.push(`@${account.username}: ${xError(error)}`);
-      }
-    });
-    state.fetchedAt = context.now;
-    const notes = [
-      failures.length ? `${failures.length} of ${accounts.length} accounts failed (${failures.slice(0, 3).join(", ")})` : null,
-      state.unknown.length ? `unknown handles: ${state.unknown.join(", ")}` : null,
-      stopped ? overBudget : null,
-    ].filter(Boolean);
-    return {
-      name,
-      kind: "tweet",
-      ok: accounts.length > 0 && failures.length < accounts.length,
-      items: cached(),
-      error: notes.length ? clip(notes.join("; "), 240) : null,
-    };
-  } catch (error) {
-    return { name, kind: "tweet", ok: false, items: cached(), error: xError(error) };
-  }
-}
-
 // --- All sources ---------------------------------------------------------------------------------
 
 /** Fetches every configured source once. Never throws. The order is the order of `sources` in the API. */
@@ -522,7 +302,6 @@ export async function gatherSources(context: FetchContext): Promise<SourceResult
     () => fetchHackerNews(context),
   ];
   if ((process.env.FEED_BLUESKY ?? "").toLowerCase() !== "off" && BLUESKY.accounts.length) jobs.push(() => fetchBluesky(context));
-  jobs.push(() => fetchX(context));
   return mapLimit(jobs, FETCH_CONCURRENCY, async (job) => {
     try {
       return await job();

@@ -119,7 +119,7 @@ The trigger is a message typed by a person in `SLACK_SONGS_CHANNEL_ID` (not a bo
 
 For that minute the tile grows from 120px to 300px, because at 120px the code is too small to scan from across a room. If the calendar block is showing, it steps aside for the minute; otherwise the photo below gives up the difference. At 300px each module of a typical invite link is 7 to 9 whole screen pixels (about 5 mm on a 55-inch TV), black on white with a white margin. `/api/songs/status` shows the current link under `jam` (`source` is `slack` or `env`), and `/api/now-playing` carries `jam` while the QR is up.
 
-## News and tweets feed
+## News and posts feed
 
 `GET /api/feed` returns about twenty news items and posts for the feed column. Candidates are gathered from the sources below, an AI agent picks which ones go up, and the answer is served from memory: a request never waits for a fetch or for the agent. The selection is redone every 15 minutes while a screen is polling (`REFRESH_MINUTES` in `lib/feed-sources.ts`); after 10 minutes without a request the loop stops fetching and stops calling the agent. The last selection is kept in `.data/feed.json`, so a restart shows it at once.
 
@@ -127,7 +127,6 @@ Sources, all in `lib/feed-sources.ts` (edit the lists there):
 
 - **News, no key needed.** RSS/Atom feeds of CoinDesk, The Block, Decrypt, Cointelegraph, The Defiant, Bitcoin Magazine, Unchained, Protos, Bankless, TechCrunch, Ars Technica, The Verge, MIT Technology Review, the Ethereum Foundation blog, Vitalik Buterin's blog, a16z crypto, Berkeley News and the club's Substack, plus the Hacker News front page through the HN Search API (stories with 150 points or more). Items older than 36 hours are ignored (a week for the three research blogs, three days for Berkeley News). Sponsored posts, press releases, price predictions and daily roundups are filtered out, and the same story from several outlets is shown once.
 - **Posts, no key needed: Bluesky.** The latest posts of the accounts in `BLUESKY.accounts`, read from Bluesky's public API and shown as source "Bluesky". These are technology, AI and security voices plus Vitalik and the campus account; crypto founders mostly do not post there. Set `FEED_BLUESKY=off` to drop the source.
-- **Tweets: X, only with a paid token.** X has no free read access: reading costs $0.005 per post on its pay-per-use plan (checked 2026-10-01). Without `X_BEARER_TOKEN` the feed has no tweets and `sources` in the response lists X as "not configured". To turn it on, create an app at [console.x.com](https://console.x.com), buy credits, and put the app's Bearer Token in `.env.local` as `X_BEARER_TOKEN`. Posts then come from the accounts in `X.accounts` (a suggested starter list, edit it), or from one X List if `X_LIST_ID` is set, which needs one request per poll instead of one per account. X is polled every 30 minutes, each post is read once, and `X_MAX_READS_PER_DAY` (default 300, i.e. at most $1.50 a day) is a hard stop.
 
 Who picks: once per refresh the candidates (at most 120: source, age and headline or post text, nothing else) go to a model in a single request. `FEED_AGENT` chooses which:
 

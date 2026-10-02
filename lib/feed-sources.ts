@@ -72,7 +72,7 @@ export const HACKER_NEWS = {
 };
 
 // Bluesky's public AppView (public.api.bsky.app) needs no key. These accounts were posting in the
-// week before 2026-10-01. Shown as kind "tweet" with source "Bluesky", never as X.
+// week before 2026-10-01. Shown as kind "tweet" with source "Bluesky".
 // Honest note: crypto founders are mostly absent from Bluesky; this list is technology, AI and
 // security voices plus Vitalik and the campus account. Set FEED_BLUESKY=off to drop the source.
 export const BLUESKY = {
@@ -91,72 +91,5 @@ export const BLUESKY = {
     "web3isgoinggreat.com",
     "eff.org",
     "ucberkeleyofficial.bsky.social",
-  ],
-};
-
-// X (Twitter). Off until X_BEARER_TOKEN is set: X has no free read tier (pay-per-use, $0.005 per
-// post read, checked 2026-10-01). With a token, posts come from X_LIST_ID if set (one request per
-// refresh, the cheapest route) or else from the accounts below (one request per account).
-export const X = {
-  name: "X",
-  api: "https://api.x.com/2",
-  maxAgeHours: 48,
-  /** X is asked at most this often, whatever REFRESH_MINUTES is. */
-  everyMinutes: 30,
-  /** Posts requested per account per poll (the API minimum is 5). */
-  postsPerAccount: 5,
-  /** Posts requested per poll in list mode. */
-  postsPerList: 50,
-  /** Hard stop on post reads per UTC day; X_MAX_READS_PER_DAY overrides it. 300 reads is $1.50. */
-  maxReadsPerDay: 300,
-  /** A numeric List ID, or "" to use the accounts. The X_LIST_ID env var overrides it. */
-  listId: "",
-  // SUGGESTED STARTER LIST - edit freely. Handles were not checked against the X API (no token on
-  // this machine); a handle X does not recognise is skipped and named in the source's error.
-  accounts: [
-    // Founders and researchers
-    "VitalikButerin",
-    "cdixon",
-    "balajis",
-    "brian_armstrong",
-    "jessepollak",
-    "haydenzadams",
-    "StaniKulechov",
-    "aeyakovenko",
-    "chameleon_jeff",
-    "drakefjustin",
-    "dankrad",
-    "TimBeiko",
-    "gakonst",
-    "danrobinson",
-    "tarunchitra",
-    "hasufl",
-    "zachxbt",
-    "tayvano_",
-    "sassal0x",
-    // Protocols and firms
-    "ethereum",
-    "solana",
-    "base",
-    "Uniswap",
-    "HyperliquidX",
-    "Polymarket",
-    "coinbase",
-    "a16zcrypto",
-    "paradigm",
-    // Markets
-    "matt_levine",
-    "WuBlockchain",
-    // AI labs and people
-    "AnthropicAI",
-    "OpenAI",
-    "GoogleDeepMind",
-    "sama",
-    "karpathy",
-    // Berkeley
-    "CalBlockchain",
-    "BerkeleyRDI",
-    "dawnsongtweets",
-    "UCBerkeley",
   ],
 };

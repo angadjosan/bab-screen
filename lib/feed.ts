@@ -10,7 +10,7 @@
 // The same refresh also feeds lib/newsworthy.ts (tokens in the news, served by /api/newsworthy).
 
 import { AgentError, agentPlan, fallbackOrder, pickWithAgent, type AgentAttempt } from "./feed-agent";
-import { emptyXState, gatherSources, type SourceCache, type SourceResult, type XState } from "./feed-fetch";
+import { gatherSources, type SourceCache, type SourceResult } from "./feed-fetch";
 import { cluster } from "./feed-parse";
 import {
   HISTORY_SELECTIONS,
@@ -50,7 +50,6 @@ type Stored = {
   history: string[][];
   /** Diagnostics for the last curation call; not part of the API. */
   agent: AgentReport | null;
-  x: XState;
 };
 
 // On globalThis so every copy of this module (route bundles, dev-mode reloads) shares one loop.
@@ -69,7 +68,7 @@ type Runtime = {
 };
 
 function emptyState(): Stored {
-  return { version: STATE_VERSION, items: [], updatedAt: null, curation: "fallback", sources: [], history: [], agent: null, x: emptyXState() };
+  return { version: STATE_VERSION, items: [], updatedAt: null, curation: "fallback", sources: [], history: [], agent: null };
 }
 
 const globalStore = globalThis as typeof globalThis & { __babFeed?: Runtime };
@@ -121,16 +120,6 @@ function load(): Promise<void> {
         .map((ids) => ids.filter((id): id is string => typeof id === "string"));
     }
     if (stored.agent && typeof stored.agent === "object") state.agent = stored.agent;
-    if (stored.x && typeof stored.x === "object") {
-      const x = stored.x;
-      state.x = {
-        ...emptyXState(),
-        ...x,
-        posts: Array.isArray(x.posts) ? x.posts.filter(isItem) : [],
-        unknown: Array.isArray(x.unknown) ? x.unknown : [],
-        fetchedAt: 0, // caches are empty after a restart, so ask again
-      };
-    }
     if (!state.items.length) state.updatedAt = null;
     runtime.state = state;
     // A restart inside the refresh interval shows the stored selection and waits its turn.
@@ -203,7 +192,7 @@ function publish(ids: string[], pool: FeedItem[], curation: "agent" | "fallback"
 async function refresh(): Promise<void> {
   const now = Date.now();
   const state = runtime.state;
-  const results = await gatherSources({ now, caches: runtime.caches, x: state.x });
+  const results = await gatherSources({ now, caches: runtime.caches });
   state.sources = results.map(({ name, kind, ok, items, error }) => ({ name, kind, ok, items: items.length, error }));
   const { pool, outlets } = buildCandidates(results, state.history[0]);
   if (!pool.length) {
@@ -288,8 +277,7 @@ function response(): FeedResponse {
     if (runtime.lastRefreshFailed) return { status: "error", ...base, message: runtime.lastError ?? "refresh failed" };
     return { status: "empty", ...base, message: "First refresh in progress" };
   }
-  // A source that is merely not set up (X without a token) is not a fault.
-  const failing = state.sources.filter((source) => !source.ok && !(source.error ?? "").startsWith("not configured"));
+  const failing = state.sources.filter((source) => !source.ok);
   const stale = state.updatedAt !== null && Date.now() - Date.parse(state.updatedAt) > STALE_AFTER_MS;
   const notes = [
     stale ? "selection is stale" : null,

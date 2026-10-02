@@ -6,7 +6,7 @@ export type FeedItem = {
   /** Stable across refreshes: a hash of the source and the item's guid or URL. */
   id: string;
   kind: FeedKind;
-  /** Publication or network name, e.g. "CoinDesk", "Bluesky", "X". */
+  /** Publication or network name, e.g. "CoinDesk", "Bluesky". */
   source: string;
   /** Person or account display name, if the source gives one. */
   author: string | null;
