@@ -22,7 +22,7 @@ type Game = NonNullable<Ok["game"]>;
 type Phase = "flip" | "landed" | "leaving";
 
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
-const money = (usd: number) => `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`;
+const money = (usd: number) => `$${usd.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(usd) ? 0 : 2, maximumFractionDigits: 2 })}`;
 const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
 
 function Qr({ qr, box, label }: { qr: JamQr; box: number; label: string }) {
@@ -114,13 +114,13 @@ export function CoinFlip() {
         <section className={styles.tile} aria-label="Coin flip">
           <div className={styles.qr}><Qr qr={view.qr} box={QR_BOX_PX} label="QR code of the coin flip wallet address" /></div>
           <div className={styles.body}>
-            <p className={styles.eyebrow}>Coin flip</p>
-            <p className={styles.how}>Send USDC on {view.network}</p>
-            {!view.waiting && <p className={styles.rules}>{money(view.minUsd)} to {money(view.maxUsd)}. Winner takes both.</p>}
+            <p className={styles.title}>Want to gamble?</p>
+            <p className={styles.rules}>Gamble on a coin flip</p>
+            {!view.waiting && <p className={styles.fine}>Send USDC on {view.network}, {money(view.minUsd)} or more</p>}
             {view.waiting ? (
               <div className={styles.status}>
-                <p className={styles.stake}>{money(view.waiting.usd)} up</p>
-                <p className={styles.rules}>Send {money(view.waiting.usd)} to play</p>
+                <p className={styles.stake}>{money(view.waiting.usd)}</p>
+                <p className={styles.rules}>Match to play</p>
                 <p className={styles.fine}>{short(view.waiting.from)} · {clock(view.waiting.remainingMs)}</p>
               </div>
             ) : (

@@ -29,15 +29,11 @@
   gap: 8px;
 }
 
-.eyebrow {
-  color: var(--text-label);
-  font: 500 16px/22px var(--bab-sans);
-  letter-spacing: .08em;
+.title {
+  color: var(--bab-gold);
+  font: 700 29px/32px var(--bab-sans);
+  letter-spacing: var(--bab-track);
   text-transform: uppercase;
-}
-
-.how {
-  font: 500 26px/30px var(--bab-sans);
 }
 
 .rules {
@@ -53,6 +49,7 @@
   color: var(--bab-gold);
   font: 600 34px/38px var(--bab-sans);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .fine {

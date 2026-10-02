@@ -185,9 +185,9 @@ Setup:
 
 Rules (`lib/coin-flip.ts`):
 
-- The first deposit between $1 and the largest stake (`COIN_FLIP_MAX_USD`, default $25) is the open stake, shown on the tile with its amount. It is refunded if nobody matches it within 10 minutes.
+- The first deposit of $1 or more is the open stake, shown on the tile with its amount. There is no upper limit, so the wallet holds whatever is staked until it is matched or refunded. It is refunded if nobody matches it within 10 minutes.
 - The next deposit of exactly the same amount makes a game: the first depositor is heads, the second tails, and the server picks the winner at random (`crypto.randomInt`). The winner is sent the whole pot about 11 seconds later, once the coin has landed on screen. Nothing is kept.
-- A deposit of any other amount while a stake is open, or outside the limits, is refunded. Under $0.10 is ignored.
+- A deposit of any other amount while a stake is open, or under $1, is refunded. Under $0.10 is ignored.
 - Money always goes back to the address it came from, so players must send from a wallet they control. A withdrawal sent straight from an exchange would be paid to the exchange's address.
 
 Every transfer is signed and written to `.data/coin-flip.json` before it is broadcast, and only one is in flight at a time, so after a crash or restart the server can only send the same transaction again and it can only land once. If a transfer never lands, the file's `problem` field says which, and the tile says it is not watching for deposits. `COIN_FLIP_CHAIN=base-sepolia` runs it on the test network with Circle's test USDC, and `COIN_FLIP_RPC_URL` replaces the public RPC.

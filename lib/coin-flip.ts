@@ -44,7 +44,6 @@ export type CoinFlipView =
       qr: JamQr;
       network: string;
       minUsd: number;
-      maxUsd: number;
       waiting: { from: Address; usd: number; remainingMs: number } | null;
       game: { id: string; heads: Address; tails: Address; stakeUsd: number; winner: Side; ageMs: number; payout: { url: string; qr: JamQr } | null } | null;
       problem: string | null;
@@ -57,8 +56,7 @@ function config() {
   const { chain, label, usdc: token } = NETWORKS[name];
   const account = privateKeyToAccount((key.startsWith("0x") ? key : `0x${key}`) as Hex);
   const transport = http(process.env.COIN_FLIP_RPC_URL?.trim() || undefined);
-  const max = Number(process.env.COIN_FLIP_MAX_USD);
-  return { name, label, token, account, explorer: chain.blockExplorers?.default.url ?? "https://basescan.org", maxUsd: max >= MIN_USD ? max : 25, reader: createPublicClient({ chain, transport }), wallet: createWalletClient({ account, chain, transport }) };
+  return { name, label, token, account, explorer: chain.blockExplorers?.default.url ?? "https://basescan.org", reader: createPublicClient({ chain, transport }), wallet: createWalletClient({ account, chain, transport }) };
 }
 
 async function load(cfg: Config): Promise<State> {
@@ -72,7 +70,7 @@ function scan(cfg: Config, state: State, deposits: Deposit[], now: number) {
   for (const deposit of deposits) {
     const amount = BigInt(deposit.amount);
     if (amount < DUST) continue;
-    if (amount < usdc(MIN_USD) || amount > usdc(cfg.maxUsd)) refund(deposit);
+    if (amount < usdc(MIN_USD)) refund(deposit);
     else if (!state.waiting) state.waiting = deposit;
     else if (state.waiting.amount !== deposit.amount) refund(deposit);
     else {
@@ -162,7 +160,6 @@ export async function getCoinFlipView(): Promise<CoinFlipView> {
     qr: buildQr(cfg.account.address),
     network: cfg.label,
     minUsd: MIN_USD,
-    maxUsd: cfg.maxUsd,
     waiting: waiting && { from: waiting.from, usd: dollars(waiting.amount), remainingMs: Math.max(0, waiting.at + WAIT_MS - now) },
     game: game && now - game.at < GAME_SHOW_MS
       ? { id: game.id, heads: game.heads, tails: game.tails, stakeUsd: dollars(game.stake), winner: game.winner, ageMs: now - game.at, payout: receipt ? { url: receipt, qr: buildQr(receipt) } : null }
