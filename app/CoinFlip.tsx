@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoinFlipView } from "../lib/coin-flip";
 import type { JamQr } from "../lib/jam";
+import { CoinToss } from "./CoinToss";
 import styles from "./CoinFlip.module.css";
 
 const POLL_MS = 2_000;
 const QR_BOX_PX = 259;
 const RECEIPT_BOX_PX = 250;
-/** The half-second wait and the 3.6s toss in CoinFlip.module.css. */
-const FLIP_MS = 4_200;
 /** How long the receipt QR stays up once the payout has landed, and the longest the stage is held waiting for it. */
 const RECEIPT_MS = 20_000;
 const MAX_SHOW_MS = 60_000;
@@ -17,8 +16,6 @@ const LEAVE_MS = 600;
 /** A game older than this when the page first sees it (a reload, a late poll) is not replayed. */
 const FRESH_MS = 30_000;
 const DEMO_EVERY_MS = 32_000;
-const CONFETTI = 70;
-const EDGE = Array.from({ length: 13 }, (_, i) => (i - 6) * 2);
 
 type Ok = Extract<CoinFlipView, { status: "ok" }>;
 type Game = NonNullable<Ok["game"]>;
@@ -41,7 +38,7 @@ function Player({ game, side, landed }: { game: Game; side: "heads" | "tails"; l
   const state = !landed ? "" : game.winner === side ? styles.won : styles.lost;
   return (
     <div className={`${styles.player} ${state}`}>
-      <p className={styles.side}>{side}</p>
+      <p className={styles.side}><span className={side === "heads" ? styles.mark : styles.dollar}>{side === "heads" ? "" : "$"}</span>{side}</p>
       <p className={styles.address}>{short(game[side])}</p>
       <p className={styles.tag}>{landed && game.winner === side ? "Winner" : ""}</p>
     </div>
@@ -92,10 +89,10 @@ export function CoinFlip() {
   useEffect(() => {
     if (!gameId) return;
     setPhase("flip");
-    const land = window.setTimeout(() => setPhase("landed"), FLIP_MS);
     const leave = window.setTimeout(() => setPhase("leaving"), MAX_SHOW_MS);
-    return () => { window.clearTimeout(land); window.clearTimeout(leave); };
+    return () => window.clearTimeout(leave);
   }, [gameId]);
+  const land = useCallback(() => setPhase((now) => (now === "flip" ? "landed" : now)), []);
 
   useEffect(() => {
     if (!paid) return;
@@ -137,18 +134,7 @@ export function CoinFlip() {
           <p className={styles.kicker}>Coin flip · {money(game.stakeUsd)} each</p>
           <div className={styles.table}>
             <Player game={game} side="heads" landed={landed} />
-            <div className={styles.toss}>
-              <span className={styles.shadow} />
-              <div className={styles.lift}>
-                <div className={styles.turn}>
-                  <div className={styles.coin} style={{ "--end": `${game.winner === "heads" ? 2880 : 3060}deg` } as CSSProperties}>
-                    {EDGE.map((z) => <i key={z} style={{ transform: `translateZ(${z}px)` }} />)}
-                    <span className={`${styles.face} ${styles.heads}`}><span className={styles.mark} /><span className={styles.name}>Heads</span></span>
-                    <span className={`${styles.face} ${styles.tails}`}><span className={styles.dollar}>$</span><span className={styles.name}>Tails</span></span>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <div className={styles.toss}><CoinToss winner={game.winner} onLand={land} /></div>
             <Player game={game} side="tails" landed={landed} />
           </div>
           <p className={styles.result}>{landed ? `${game.winner === "heads" ? "Heads" : "Tails"} wins ${pot}` : ""}</p>
@@ -157,13 +143,6 @@ export function CoinFlip() {
             <div className={styles.receipt}>
               <p>Scan for the transaction</p>
               <div className={styles.receiptQr}><Qr qr={receipt} box={RECEIPT_BOX_PX} label="QR code of the payout transaction on the block explorer" /></div>
-            </div>
-          )}
-          {landed && (
-            <div className={styles.confetti} aria-hidden="true">
-              {Array.from({ length: CONFETTI }, (_, i) => (
-                <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 12) * .09}s`, animationDuration: `${2.4 + (i % 5) * .35}s` }} />
-              ))}
             </div>
           )}
         </div>

@@ -97,7 +97,7 @@
 .table {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 440px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 700px minmax(0, 1fr);
   align-items: center;
 }
 
@@ -107,10 +107,40 @@
 }
 
 .side {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
   color: var(--text-label);
   font: 500 28px/34px var(--bab-sans);
   letter-spacing: .08em;
   text-transform: uppercase;
+}
+
+/* The face each player has: the B@B mark is heads, the dollar sign tails. */
+.mark,
+.dollar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--bab-gold);
+}
+
+.mark::after {
+  content: "";
+  display: block;
+  height: 100%;
+  background: var(--bab-black);
+  -webkit-mask: url(/bab-logo.svg) center / 30px no-repeat;
+  mask: url(/bab-logo.svg) center / 30px no-repeat;
+}
+
+.dollar {
+  color: var(--bab-black);
+  font: 700 28px/44px var(--bab-sans);
+  letter-spacing: 0;
+  text-align: center;
 }
 
 .address {
@@ -136,12 +166,7 @@
   opacity: .3;
 }
 
-/*
- * The toss, seen from above: the coin is thrown up towards the viewer (it grows), tumbles on all three axes (end
- * over end, once round its own diameter, and the whole tumble once round like a spun coin), falls back, bounces
- * twice and rocks to rest. Rise and fall are the two halves of a parabola. Every part runs for 3.6s after a
- * half-second wait; FLIP_MS in CoinFlip.tsx is the sum.
- */
+/* The coin is drawn on a canvas (app/CoinToss.tsx) centred on this cell, over a plate that catches its shadow. */
 .toss {
   position: relative;
   z-index: 1;
@@ -150,253 +175,13 @@
   height: 300px;
 }
 
-/* The lit patch of table the coin's shadow falls on. */
 .toss::before {
   content: "";
   position: absolute;
-  inset: -230px;
-  background: radial-gradient(closest-side, rgba(254, 203, 51, .16), rgba(254, 203, 51, 0));
-  transition: opacity var(--bab-slow) linear;
-  opacity: .7;
-}
-
-.landed .toss::before {
-  opacity: 1;
-}
-
-.toss::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 3px solid var(--bab-gold);
+  inset: -190px;
+  border: var(--bab-hair) solid var(--rule-lit);
   border-radius: 50%;
-  opacity: 0;
-  animation: ring .8s ease-out 3.38s;
-}
-
-@keyframes ring {
-  from {
-    opacity: .7;
-  }
-
-  to {
-    opacity: 0;
-    transform: scale(2.3);
-  }
-}
-
-.shadow {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: #000;
-  filter: blur(14px);
-  opacity: .75;
-  transform: translate(8px, 12px);
-  animation: shadow 3.6s .5s both;
-}
-
-.lift {
-  position: absolute;
-  inset: 0;
-  perspective: 1100px;
-  animation: lift 3.6s .5s both;
-}
-
-.turn,
-.coin {
-  position: absolute;
-  inset: 0;
-  transform-style: preserve-3d;
-}
-
-.turn {
-  animation: turn 3.6s .5s both;
-}
-
-.coin {
-  animation: spin 3.6s .5s both;
-}
-
-@keyframes turn {
-  0% {
-    transform: rotateZ(0deg);
-    animation-timing-function: linear;
-  }
-
-  80% {
-    transform: rotateZ(335deg);
-    animation-timing-function: cubic-bezier(.2, .7, .3, 1);
-  }
-
-  100% {
-    transform: rotateZ(360deg);
-  }
-}
-
-@keyframes lift {
-  0% {
-    transform: scale(1);
-    animation-timing-function: cubic-bezier(.33, .66, .66, 1);
-  }
-
-  40% {
-    transform: translateY(-70px) scale(1.8);
-    animation-timing-function: cubic-bezier(.33, 0, .66, .33);
-  }
-
-  80% {
-    transform: scale(1);
-    animation-timing-function: cubic-bezier(.33, .66, .66, 1);
-  }
-
-  86% {
-    transform: scale(1.14);
-    animation-timing-function: cubic-bezier(.33, 0, .66, .33);
-  }
-
-  92% {
-    transform: scale(1);
-    animation-timing-function: cubic-bezier(.33, .66, .66, 1);
-  }
-
-  95% {
-    transform: scale(1.035);
-    animation-timing-function: cubic-bezier(.33, 0, .66, .33);
-  }
-
-  98%,
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes shadow {
-  0% {
-    opacity: .75;
-    transform: translate(8px, 12px) scale(1);
-    animation-timing-function: cubic-bezier(.33, .66, .66, 1);
-  }
-
-  40% {
-    opacity: .2;
-    transform: translate(90px, 120px) scale(1.5);
-    animation-timing-function: cubic-bezier(.33, 0, .66, .33);
-  }
-
-  80% {
-    opacity: .75;
-    transform: translate(8px, 12px) scale(1);
-    animation-timing-function: cubic-bezier(.33, .66, .66, 1);
-  }
-
-  86% {
-    opacity: .55;
-    transform: translate(22px, 30px) scale(1.1);
-    animation-timing-function: cubic-bezier(.33, 0, .66, .33);
-  }
-
-  92%,
-  100% {
-    opacity: .75;
-    transform: translate(8px, 12px) scale(1);
-  }
-}
-
-@keyframes spin {
-  0% {
-    transform: rotateX(0deg) rotateY(0deg);
-    animation-timing-function: linear;
-  }
-
-  80% {
-    transform: rotateX(var(--end)) rotateY(360deg);
-  }
-
-  84% {
-    transform: rotateX(calc(var(--end) + 24deg)) rotateY(346deg);
-  }
-
-  88% {
-    transform: rotateX(calc(var(--end) - 14deg)) rotateY(369deg);
-  }
-
-  92% {
-    transform: rotateX(calc(var(--end) + 7deg)) rotateY(355deg);
-  }
-
-  96% {
-    transform: rotateX(calc(var(--end) - 3deg)) rotateY(362deg);
-  }
-
-  100% {
-    transform: rotateX(var(--end)) rotateY(360deg);
-  }
-}
-
-/* The coin's edge: discs stacked through its thickness, alternately light and dark like reeding. */
-.coin i {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: #a8740f;
-}
-
-.coin i:nth-child(odd) {
-  background: #d39a1e;
-}
-
-.face {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 4px;
-  border-radius: 50%;
-  backface-visibility: hidden;
-  color: #6f4504;
-  background:
-    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, .7), rgba(255, 255, 255, 0) 44%),
-    conic-gradient(from 140deg, #e9a81f, #ffe27a, #d9951a, #ffd24a, #b9790f, #ffe27a, #e9a81f);
-  box-shadow: inset 0 0 0 9px #c58a17, inset 0 0 0 11px rgba(255, 255, 255, .55), inset 0 0 0 13px rgba(0, 0, 0, .2), inset 0 0 44px rgba(120, 70, 0, .4);
-}
-
-.face::before {
-  content: "";
-  position: absolute;
-  inset: 24px;
-  border: 3px dotted rgba(111, 69, 4, .55);
-  border-radius: 50%;
-}
-
-.heads {
-  transform: translateZ(13px);
-}
-
-.tails {
-  transform: rotateX(180deg) translateZ(13px);
-}
-
-.mark {
-  width: 132px;
-  height: 120px;
-  background: currentColor;
-  -webkit-mask: url(/bab-logo.svg) center / contain no-repeat;
-  mask: url(/bab-logo.svg) center / contain no-repeat;
-}
-
-.dollar {
-  font: 700 150px/120px var(--bab-sans);
-  text-shadow: 0 2px 0 rgba(255, 255, 255, .45);
-}
-
-.name {
-  font: 700 22px/28px var(--bab-sans);
-  letter-spacing: .22em;
-  text-indent: .22em;
-  text-transform: uppercase;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, .45);
+  background: var(--bab-surface-2);
 }
 
 .result {
@@ -450,35 +235,4 @@
 .receiptQr svg {
   display: block;
   fill: var(--bab-black-true);
-}
-
-.confetti {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.confetti span {
-  position: absolute;
-  top: -40px;
-  width: 14px;
-  height: 26px;
-  background: var(--bab-gold);
-  animation: fall linear both;
-}
-
-.confetti span:nth-child(3n) {
-  background: var(--bab-white);
-}
-
-.confetti span:nth-child(5n) {
-  width: 10px;
-  height: 18px;
-  background: var(--signal-up);
-}
-
-@keyframes fall {
-  to {
-    transform: translateY(1160px) rotate(900deg);
-  }
 }
