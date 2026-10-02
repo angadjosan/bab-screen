@@ -140,10 +140,12 @@ export function CoinFlip() {
             <div className={styles.toss}>
               <span className={styles.shadow} />
               <div className={styles.lift}>
-                <div className={styles.coin} style={{ "--end": `${game.winner === "heads" ? 2880 : 3060}deg` } as CSSProperties}>
-                  {EDGE.map((z) => <i key={z} style={{ transform: `translateZ(${z}px)` }} />)}
-                  <span className={`${styles.face} ${styles.heads}`}><span className={styles.mark} /><span className={styles.name}>Heads</span></span>
-                  <span className={`${styles.face} ${styles.tails}`}><span className={styles.dollar}>$</span><span className={styles.name}>Tails</span></span>
+                <div className={styles.turn}>
+                  <div className={styles.coin} style={{ "--end": `${game.winner === "heads" ? 2880 : 3060}deg` } as CSSProperties}>
+                    {EDGE.map((z) => <i key={z} style={{ transform: `translateZ(${z}px)` }} />)}
+                    <span className={`${styles.face} ${styles.heads}`}><span className={styles.mark} /><span className={styles.name}>Heads</span></span>
+                    <span className={`${styles.face} ${styles.tails}`}><span className={styles.dollar}>$</span><span className={styles.name}>Tails</span></span>
+                  </div>
                 </div>
               </div>
             </div>

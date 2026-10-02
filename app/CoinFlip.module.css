@@ -137,9 +137,10 @@
 }
 
 /*
- * The toss, seen from above: the coin is thrown up towards the viewer (it grows), turns end over end at a steady
- * rate, falls back, bounces twice and rocks to rest. Rise and fall are the two halves of a parabola. Every part
- * runs for 3.6s after a half-second wait; FLIP_MS in CoinFlip.tsx is the sum.
+ * The toss, seen from above: the coin is thrown up towards the viewer (it grows), tumbles on all three axes (end
+ * over end, once round its own diameter, and the whole tumble once round like a spun coin), falls back, bounces
+ * twice and rocks to rest. Rise and fall are the two halves of a parabola. Every part runs for 3.6s after a
+ * half-second wait; FLIP_MS in CoinFlip.tsx is the sum.
  */
 .toss {
   position: relative;
@@ -202,11 +203,35 @@
   animation: lift 3.6s .5s both;
 }
 
+.turn,
 .coin {
   position: absolute;
   inset: 0;
   transform-style: preserve-3d;
+}
+
+.turn {
+  animation: turn 3.6s .5s both;
+}
+
+.coin {
   animation: spin 3.6s .5s both;
+}
+
+@keyframes turn {
+  0% {
+    transform: rotateZ(0deg);
+    animation-timing-function: linear;
+  }
+
+  80% {
+    transform: rotateZ(335deg);
+    animation-timing-function: cubic-bezier(.2, .7, .3, 1);
+  }
+
+  100% {
+    transform: rotateZ(360deg);
+  }
 }
 
 @keyframes lift {
@@ -216,7 +241,7 @@
   }
 
   40% {
-    transform: scale(1.8);
+    transform: translateY(-70px) scale(1.8);
     animation-timing-function: cubic-bezier(.33, 0, .66, .33);
   }
 
@@ -285,27 +310,27 @@
   }
 
   80% {
-    transform: rotateX(var(--end)) rotateY(0deg);
+    transform: rotateX(var(--end)) rotateY(360deg);
   }
 
   84% {
-    transform: rotateX(calc(var(--end) + 24deg)) rotateY(-12deg);
+    transform: rotateX(calc(var(--end) + 24deg)) rotateY(346deg);
   }
 
   88% {
-    transform: rotateX(calc(var(--end) - 14deg)) rotateY(8deg);
+    transform: rotateX(calc(var(--end) - 14deg)) rotateY(369deg);
   }
 
   92% {
-    transform: rotateX(calc(var(--end) + 7deg)) rotateY(-4deg);
+    transform: rotateX(calc(var(--end) + 7deg)) rotateY(355deg);
   }
 
   96% {
-    transform: rotateX(calc(var(--end) - 3deg)) rotateY(2deg);
+    transform: rotateX(calc(var(--end) - 3deg)) rotateY(362deg);
   }
 
   100% {
-    transform: rotateX(var(--end)) rotateY(0deg);
+    transform: rotateX(var(--end)) rotateY(360deg);
   }
 }
 
