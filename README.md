@@ -173,6 +173,27 @@ Until one of the two works there is no calendar block on the screen at all (the 
 
 What is shown: events that have not ended, soonest first, starting within 28 days, at most 12 from the API (the block shows as many whole rows as its height allows: two at the 177px the page gives it). Recurring events are expanded (`RRULE`, `EXDATE`, moved or cancelled instances), cancelled events are left out, and so is anything longer than 14 days. Times are always shown in `America/Los_Angeles`, whatever the server's or the browser's timezone. Parsing is done with `ical.js`; turning a time in a named zone into an instant uses the machine's own timezone database (`lib/events.ts`). An event whose timezone name is not an IANA name is left out rather than guessed. Only the title and location reach the page, as plain text; descriptions, guests and links never leave the server.
 
+## Coin flip
+
+Two people send the same amount of USDC on Base to the wallet in the QR code under the news feed, the screen flips a coin, and the winner is sent both stakes. It is off until `BAB_PRIVATE_KEY` is set in `.env.local`; with it empty the tile is not shown and the feed has the whole column.
+
+Setup:
+
+1. Put the private key of a wallet made for this, and used for nothing else, in `.env.local` as `BAB_PRIVATE_KEY`. Whoever holds that file holds whatever is in the wallet.
+2. Send the wallet about $1 of ETH on Base. Payouts are USDC transfers and their gas is paid in ETH; the stakes themselves are never used for it.
+3. Keep the dashboard open. Deposits are read only while a page is asking `/api/coin-flip` (every 2 seconds); ones that arrive while it is closed are handled when it opens again.
+
+Rules (`lib/coin-flip.ts`):
+
+- The first deposit between $1 and the largest stake (`COIN_FLIP_MAX_USD`, default $25) is the open stake, shown on the tile with its amount. It is refunded if nobody matches it within 10 minutes.
+- The next deposit of exactly the same amount makes a game: the first depositor is heads, the second tails, and the server picks the winner at random (`crypto.randomInt`). The winner is sent the whole pot about 8 seconds later, once the coin has landed on screen. Nothing is kept.
+- A deposit of any other amount while a stake is open, or outside the limits, is refunded. Under $0.10 is ignored.
+- Money always goes back to the address it came from, so players must send from a wallet they control. A withdrawal sent straight from an exchange would be paid to the exchange's address.
+
+Every transfer is signed and written to `.data/coin-flip.json` before it is broadcast, and only one is in flight at a time, so after a crash or restart the server can only send the same transaction again and it can only land once. If a transfer never lands, the file's `problem` field says which, and the tile says it is not watching for deposits. `COIN_FLIP_CHAIN=base-sepolia` runs it on the test network with Circle's test USDC, and `COIN_FLIP_RPC_URL` replaces the public RPC.
+
+`app/CoinFlip.tsx` has the tile and the full-screen flip. Add `?coinflip=demo` to the address to play the animation with made-up players every 20 seconds.
+
 ## Background waves
 
 The ribbons behind the page (`app/Background.tsx`) change colour with the daylight outside. The palette is read off the sun's position over Berkeley (`lib/sun.ts`, computed from the clock with no network call; change `LATITUDE` and `LONGITUDE` there for another room), so the dawn and dusk colours move with the seasons. `lib/wave-palette.ts` holds ten keyframe palettes, from a dim indigo and plum at night through blue at midday to the indigo, plum and burnt amber of sunset, and blends between them continuously; the colours are refreshed every 10 seconds, in steps too small to see. To hold the palette at one moment instead, set `PINNED_TIME` in `app/Background.tsx` to an instant such as `"2026-10-01T08:00:00-07:00"`; it is `null`, which follows the sun. Every palette stays under the lightness and luminance ceilings in that file, which are what keep the text readable on top of the waves; the reasoning and the contrast figures are in its comments.
