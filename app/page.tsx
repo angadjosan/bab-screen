@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChumCaption, chumAlt, createChumDeck, useChumPhotos, type ChumDeck } from "./Chum";
+import { CoinFlip } from "./CoinFlip";
 import { Events } from "./Events";
 import { Feed } from "./Feed";
 import { FeaturedMarket, MarketsProvider, TickerTape } from "./Markets";
@@ -417,7 +418,10 @@ export default function Dashboard() {
           <img className="brand-logo" src="/bab-logo.svg" alt="Blockchain at Berkeley" width={344} height={311} />
           <div className="tape-slot"><TickerTape /></div>
         </div>
-        <div className="feed-slot"><Feed /></div>
+        <div className="feed-slot">
+          <div className="feed-box"><Feed /></div>
+          <CoinFlip />
+        </div>
         <div className="featured-slot"><FeaturedMarket /></div>
         <div className="side-slot">
           <NowPlaying />

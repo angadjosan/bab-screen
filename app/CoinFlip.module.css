@@ -1,0 +1,235 @@
+/* The QR tile under the news feed. 259px is seven screen pixels per module for a wallet address. */
+.tile {
+  flex: none;
+  display: flex;
+  gap: 20px;
+  padding-top: 24px;
+  border-top: var(--bab-hair) solid var(--rule);
+}
+
+.qr {
+  flex: none;
+  width: 259px;
+  height: 259px;
+  display: grid;
+  place-items: center;
+  background: var(--bab-white);
+}
+
+.qr svg {
+  display: block;
+  fill: var(--bab-black-true);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eyebrow {
+  color: var(--text-label);
+  font: 500 16px/22px var(--bab-sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.how {
+  font: 500 26px/30px var(--bab-sans);
+}
+
+.rules {
+  color: var(--text-secondary);
+  font: 400 20px/26px var(--bab-sans);
+}
+
+.status {
+  margin-top: auto;
+}
+
+.stake {
+  color: var(--bab-gold);
+  font: 600 34px/38px var(--bab-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.fine {
+  color: var(--text-label);
+  font: 400 18px/24px var(--bab-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The flip takes the whole stage. Fixed resolves against .dashboard, which is transformed. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  justify-items: center;
+  align-items: center;
+  padding: 96px;
+  overflow: hidden;
+  background: rgba(8, 8, 8, .96);
+  animation: fade .4s ease-out both, fade .6s ease-in 15.4s reverse forwards;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.kicker {
+  color: var(--text-secondary);
+  font: 500 30px/36px var(--bab-sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.table {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 440px minmax(0, 1fr);
+  align-items: center;
+}
+
+.player {
+  text-align: center;
+  transition: opacity var(--bab-slow) var(--bab-ease), color var(--bab-slow) var(--bab-ease);
+}
+
+.side {
+  color: var(--text-label);
+  font: 500 28px/34px var(--bab-sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.address {
+  margin-top: 12px;
+  font: 600 64px/72px var(--bab-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.tag {
+  height: 40px;
+  margin-top: 12px;
+  font: 600 30px/40px var(--bab-sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.won,
+.won .side {
+  color: var(--bab-gold);
+}
+
+.lost {
+  opacity: .3;
+}
+
+.toss {
+  justify-self: center;
+  perspective: 1600px;
+  animation: toss 5s cubic-bezier(.3, 0, .3, 1) both;
+}
+
+@keyframes toss {
+  45% {
+    transform: translateY(-110px) scale(1.22);
+  }
+}
+
+.coin {
+  position: relative;
+  width: 380px;
+  height: 380px;
+  transform-style: preserve-3d;
+  animation: spin 5s cubic-bezier(.12, .55, .2, 1) both;
+}
+
+@keyframes spin {
+  to {
+    transform: rotateX(var(--end));
+  }
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  backface-visibility: hidden;
+  color: var(--bab-black);
+  font: 700 220px/1 var(--bab-sans);
+  background: radial-gradient(circle at 35% 30%, var(--bab-gold-hot), var(--bab-gold) 45%, var(--bab-gold-deep));
+  box-shadow: inset 0 0 0 12px rgba(0, 0, 0, .16), inset 0 0 0 16px rgba(255, 255, 255, .28);
+}
+
+.back {
+  transform: rotateX(180deg);
+}
+
+.landed .toss {
+  filter: drop-shadow(0 0 60px rgba(254, 203, 51, .45));
+}
+
+.result {
+  font: 700 96px/104px var(--bab-sans);
+  letter-spacing: var(--bab-track);
+}
+
+.landed .result {
+  color: var(--bab-gold);
+  animation: pop .5s var(--bab-ease) both;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(.8);
+  }
+}
+
+.payout {
+  height: 40px;
+  margin-top: 16px;
+  color: var(--text-secondary);
+  font: 400 30px/40px var(--bab-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.confetti span {
+  position: absolute;
+  top: -40px;
+  width: 14px;
+  height: 26px;
+  background: var(--bab-gold);
+  animation: fall linear both;
+}
+
+.confetti span:nth-child(3n) {
+  background: var(--bab-white);
+}
+
+.confetti span:nth-child(5n) {
+  width: 10px;
+  height: 18px;
+  background: var(--signal-up);
+}
+
+@keyframes fall {
+  to {
+    transform: translateY(1160px) rotate(900deg);
+  }
+}
