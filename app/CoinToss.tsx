@@ -2,10 +2,10 @@
 
 import { useEffect, useRef } from "react";
 
-// The coin toss, drawn as flat vector art on a canvas. The coin is a rigid disc with a real orientation: it sinks
-// back before the throw, turns end over end in the air about an axis that itself swings once round, comes down
-// on its rim and spins there, nearly edge-on, before it falls flat. Projection is orthographic, so each face is
-// an affine map of its artwork.
+// The coin toss, drawn as flat vector art on a canvas. The coin is a rigid disc with a real orientation, and the
+// toss is drawn out for suspense: it trembles and sinks back, is thrown up and hangs in slow motion at the top,
+// comes down standing on its edge and spins there showing neither face, leans towards the losing side, and only
+// then falls flat on the winner. Projection is orthographic, so each face is an affine map of its artwork.
 
 type Side = "heads" | "tails";
 type M3 = number[];
@@ -13,19 +13,21 @@ type M3 = number[];
 const SIZE = 780;
 const RADIUS = 150;
 const THICKNESS = .15;
-// Seconds: at rest, the dip before the throw, in the air, two hops (duration, height), then the spin on the rim.
-const HOLD = .5;
-const WINDUP = .55;
-const FLIGHT = 2.6;
-const HOPS = [[.24, .08], [.13, .02]];
-const RATTLE = 2.4;
+// Seconds: at rest, the trembling dip before the throw, in the air, two hops (duration, height) as it lands, the
+// spin on its edge, and the fall flat.
+const HOLD = 1;
+const WINDUP = 1.6;
+const FLIGHT = 4.6;
+const HOPS = [[.3, .1], [.16, .03]];
+const SPIN = 3.6;
+const FALL = 2.6;
 /** The result is called this long after the coin comes down, once the face is plain to see. */
-const LANDED_AFTER = 1.7;
+const LANDED_AFTER = SPIN + 2.1;
 const SPARKLE = 2.6;
-const TURNS = 9;
+const TURNS = 12;
 const LIFT = 1.1;
-/** How far from flat the coin comes down: just short of standing on its edge. */
-const RIM = 1.45;
+/** How much of its speed the toss loses at the top: 0 is none, 1 would stop it dead. */
+const HANG = .75;
 const LIGHT = [-.6, -.8];
 const STARS = [[-1.3, -.9, .2], [1.32, -.78, .16], [1.12, 1.08, .13], [-1.08, 1.02, .18], [.25, -1.5, .11]];
 
@@ -41,30 +43,38 @@ type Logo = { path: Path2D; minor: boolean }[];
 let logo: Promise<Logo> | null = null;
 const loadLogo = () => (logo ??= fetch("/bab-logo.svg").then((r) => r.text()).then((svg) => [...svg.matchAll(/<path d="([^"]+)" fill="([^"]+)"/g)].map((m) => ({ path: new Path2D(m[1]), minor: m[2] !== "#FECB33" }))));
 
-/** Orientation and height (in radii the coin is lifted towards the viewer) at t seconds. */
+/** Orientation, height (in radii the coin is lifted towards the viewer) and tremble (px) at t seconds. */
 function pose(t: number, tails: boolean) {
   const rest = tails ? rotX(PI) : IDENTITY;
   const launch = HOLD + WINDUP;
   if (t < launch) {
-    // Slow down and back, then quickly up into the throw.
-    const dip = sin(PI * (max(0, t - HOLD) / WINDUP) ** 2);
-    return { R: rotX(-.32 * dip), h: -.13 * dip };
+    // Slowly down and back with a growing tremble, then quickly up into the throw.
+    const wind = max(0, t - HOLD) / WINDUP;
+    const dip = sin(PI * wind ** 3);
+    return { R: rotX(-.34 * dip), h: -.18 * dip, x: 5 * wind * wind * sin(140 * t), y: 5 * wind * wind * sin(117 * t + 1) };
   }
-  const flight = (t - launch) / FLIGHT;
-  if (flight < 1) {
-    const R = mul(mul(rotZ(2 * PI * flight), rotY(.4 * sin(PI * flight))), rotX((2 * PI * TURNS + (tails ? PI : 0) + RIM) * flight));
-    return { R, h: 4 * LIFT * flight * (1 - flight) };
+  const thrown = (t - launch) / FLIGHT;
+  if (thrown < 1) {
+    // Time itself slows at the top, so the coin hangs there turning slowly.
+    const flight = thrown + HANG * sin(2 * PI * thrown) / (2 * PI);
+    const R = mul(mul(rotZ(2 * PI * flight), rotY(.4 * sin(PI * flight))), rotX((2 * PI * TURNS + (tails ? PI : 0) + PI / 2) * flight));
+    return { R, h: 4 * LIFT * flight * (1 - flight), x: 0, y: 0 };
   }
   let u = t - launch - FLIGHT;
-  // On the rim the lean circles round faster and faster as it dies away, like a coin spun on a table.
-  const tilt = RIM * cos(PI / 2 * min(1, u / RATTLE)) ** 1.6;
-  const round = 2 * PI * (1.5 * u + .9 * u * u);
+  // On its edge the coin rocks either side of upright, a sliver of each face in turn. Past 90 degrees is the
+  // losing face: the fall begins with a lean that way before it swings back and drops on the winner.
+  const fall = min(1, max(0, (u - SPIN) / FALL));
+  const tilt = u < SPIN
+    ? PI / 2 + .16 * sin(2 * PI * 1.1 * u) * sin(PI * u / SPIN)
+    : PI / 2 * cos(PI / 2 * fall) ** 1.6 + (fall < .35 ? .4 * sin(PI * fall / .35) : 0);
+  // The spin slows while it stands, then the lean circles faster and faster as it dies away.
+  const round = 2 * PI * (u < SPIN ? 3 * u - .95 / SPIN * u * u : 2.05 * SPIN + 1.1 * (u - SPIN) + 1.2 * (u - SPIN) ** 2);
   const R = mul(mul(mul(rotZ(round), rotX(tilt)), rotZ(-round)), rest);
   for (const [length, height] of HOPS) {
-    if (u < length) return { R, h: 4 * height * (u / length) * (1 - u / length) };
+    if (u < length) return { R, h: 4 * height * (u / length) * (1 - u / length), x: 0, y: 0 };
     u -= length;
   }
-  return { R, h: 0 };
+  return { R, h: 0, x: 0, y: 0 };
 }
 
 function disc(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fill: string | CanvasGradient) {
@@ -123,7 +133,7 @@ function star(ctx: CanvasRenderingContext2D, x: number, y: number, size: number,
 }
 
 function draw(ctx: CanvasRenderingContext2D, t: number, tails: boolean, mark: Logo | null) {
-  const { R, h } = pose(t, tails);
+  const { R, h, x: shakeX, y: shakeY } = pose(t, tails);
   const e1 = [R[0], R[3]];
   const e2 = [R[1], R[4]];
   const facing = R[8] >= 0 ? 1 : -1;
@@ -163,13 +173,14 @@ function draw(ctx: CanvasRenderingContext2D, t: number, tails: boolean, mark: Lo
   solid(centre + 10 + 95 * lift, centre + 14 + 125 * lift, RADIUS * (1 + .12 * lift), "#000");
 
   const r = RADIUS * (1 + h);
-  const y = centre - 30 * lift;
+  const x = centre + shakeX;
+  const y = centre - 30 * lift + shakeY;
   const lean = hypot(R[2], R[5]);
   const lit = lean ? .5 - facing * (R[2] * LIGHT[0] + R[5] * LIGHT[1]) / lean / 2 : .5;
-  const [dx, dy] = solid(centre, y, r, mix([169, 98, 12], [246, 178, 44], lit));
+  const [dx, dy] = solid(x, y, r, mix([169, 98, 12], [246, 178, 44], lit));
 
   ctx.save();
-  ctx.transform(r * e1[0], r * e1[1], r * e2[0], r * e2[1], centre + dx, y + dy);
+  ctx.transform(r * e1[0], r * e1[1], r * e2[0], r * e2[1], x + dx, y + dy);
   if (facing < 0) ctx.scale(1, -1);
   face(ctx, facing < 0, mark);
   disc(ctx, 0, 0, 1, `rgba(110, 52, 0, ${(1 - Math.abs(R[8])) * .3})`);

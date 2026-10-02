@@ -15,7 +15,7 @@ const MAX_SHOW_MS = 60_000;
 const LEAVE_MS = 600;
 /** A game older than this when the page first sees it (a reload, a late poll) is not replayed. */
 const FRESH_MS = 30_000;
-const DEMO_EVERY_MS = 32_000;
+const DEMO_EVERY_MS = 42_000;
 
 type Ok = Extract<CoinFlipView, { status: "ok" }>;
 type Game = NonNullable<Ok["game"]>;
