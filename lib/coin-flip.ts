@@ -26,7 +26,7 @@ const GAME_SHOW_MS = 60_000;
 const RESEND_MS = 20_000;
 const LOST_MS = 2 * 60_000;
 const CONFIRMATIONS = 2n;
-const MAX_BLOCK_RANGE = 2_000n;
+const MAX_BLOCK_RANGE = 1_000n;
 
 type Side = "heads" | "tails";
 type Deposit = { id: string; from: Address; amount: string; at: number };
