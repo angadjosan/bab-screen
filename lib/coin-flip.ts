@@ -21,7 +21,7 @@ const DUST = usdc(0.1);
 const TICK_MS = 3_000;
 const WAIT_MS = 10 * 60_000;
 /** The payout is held this long so the chain does not show the winner before the coin lands. */
-const REVEAL_MS = 8_000;
+const REVEAL_MS = 11_000;
 const GAME_SHOW_MS = 120_000;
 const RESEND_MS = 20_000;
 const LOST_MS = 2 * 60_000;

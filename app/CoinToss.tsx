@@ -2,9 +2,10 @@
 
 import { useEffect, useRef } from "react";
 
-// The coin toss, drawn as flat vector art on a canvas. The coin is a rigid disc with a real orientation: in the
-// air it turns end over end about an axis that itself swings once round, then it lands, hops twice and rattles
-// flat the way a coin does on a table. Projection is orthographic, so each face is an affine map of its artwork.
+// The coin toss, drawn as flat vector art on a canvas. The coin is a rigid disc with a real orientation: it sinks
+// back before the throw, turns end over end in the air about an axis that itself swings once round, comes down
+// on its rim and spins there, nearly edge-on, before it falls flat. Projection is orthographic, so each face is
+// an affine map of its artwork.
 
 type Side = "heads" | "tails";
 type M3 = number[];
@@ -12,15 +13,19 @@ type M3 = number[];
 const SIZE = 780;
 const RADIUS = 150;
 const THICKNESS = .15;
-// Seconds: at rest, the dip before the throw, in the air, two hops (duration, height), then the rattle.
-const HOLD = .35;
-const WINDUP = .2;
-const FLIGHT = 1.75;
-const HOPS = [[.3, .13], [.17, .035]];
-const RATTLE = 1;
-const LANDED_AFTER = .45;
+// Seconds: at rest, the dip before the throw, in the air, two hops (duration, height), then the spin on the rim.
+const HOLD = .5;
+const WINDUP = .55;
+const FLIGHT = 2.6;
+const HOPS = [[.24, .08], [.13, .02]];
+const RATTLE = 2.4;
+/** The result is called this long after the coin comes down, once the face is plain to see. */
+const LANDED_AFTER = 1.7;
 const SPARKLE = 2.6;
-const TURNS = 6;
+const TURNS = 9;
+const LIFT = 1.1;
+/** How far from flat the coin comes down: just short of standing on its edge. */
+const RIM = 1.45;
 const LIGHT = [-.6, -.8];
 const STARS = [[-1.3, -.9, .2], [1.32, -.78, .16], [1.12, 1.08, .13], [-1.08, 1.02, .18], [.25, -1.5, .11]];
 
@@ -40,15 +45,20 @@ const loadLogo = () => (logo ??= fetch("/bab-logo.svg").then((r) => r.text()).th
 function pose(t: number, tails: boolean) {
   const rest = tails ? rotX(PI) : IDENTITY;
   const launch = HOLD + WINDUP;
-  if (t < launch) return { R: IDENTITY, h: -.06 * sin(PI * max(0, (t - HOLD) / WINDUP)) };
+  if (t < launch) {
+    // Slow down and back, then quickly up into the throw.
+    const dip = sin(PI * (max(0, t - HOLD) / WINDUP) ** 2);
+    return { R: rotX(-.32 * dip), h: -.13 * dip };
+  }
   const flight = (t - launch) / FLIGHT;
   if (flight < 1) {
-    const R = mul(mul(rotZ(2 * PI * flight), rotY(.4 * sin(PI * flight))), rotX((2 * PI * TURNS + (tails ? PI : 0)) * flight));
-    return { R, h: 4 * flight * (1 - flight) };
+    const R = mul(mul(rotZ(2 * PI * flight), rotY(.4 * sin(PI * flight))), rotX((2 * PI * TURNS + (tails ? PI : 0) + RIM) * flight));
+    return { R, h: 4 * LIFT * flight * (1 - flight) };
   }
   let u = t - launch - FLIGHT;
-  const tilt = .42 * min(1, u / .05) * (1 - min(1, u / RATTLE)) ** 2;
-  const round = 2 * PI * (2.2 * u + 2.6 * u * u);
+  // On the rim the lean circles round faster and faster as it dies away, like a coin spun on a table.
+  const tilt = RIM * cos(PI / 2 * min(1, u / RATTLE)) ** 1.6;
+  const round = 2 * PI * (1.5 * u + .9 * u * u);
   const R = mul(mul(mul(rotZ(round), rotX(tilt)), rotZ(-round)), rest);
   for (const [length, height] of HOPS) {
     if (u < length) return { R, h: 4 * height * (u / length) * (1 - u / length) };
@@ -150,7 +160,7 @@ function draw(ctx: CanvasRenderingContext2D, t: number, tails: boolean, mark: Lo
 
   ctx.clearRect(0, 0, SIZE, SIZE);
   const lift = max(0, h);
-  solid(centre + 10 + 95 * lift, centre + 14 + 125 * lift, RADIUS * (1 + .12 * lift), "#0A0A0A");
+  solid(centre + 10 + 95 * lift, centre + 14 + 125 * lift, RADIUS * (1 + .12 * lift), "#000");
 
   const r = RADIUS * (1 + h);
   const y = centre - 30 * lift;
