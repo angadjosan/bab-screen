@@ -10,9 +10,11 @@
 // The same refresh also feeds lib/newsworthy.ts (tokens in the news, served by /api/newsworthy).
 
 import { AgentError, agentPlan, fallbackOrder, pickWithAgent, type AgentAttempt } from "./feed-agent";
+import { labelItems } from "./feed-labels";
 import { gatherSources, type SourceCache, type SourceResult } from "./feed-fetch";
 import { cluster } from "./feed-parse";
 import {
+  ALERT_MAX_AGE_HOURS,
   HISTORY_SELECTIONS,
   IDLE_PAUSE_MINUTES,
   MAX_CANDIDATES,
@@ -178,9 +180,18 @@ export function buildCandidates(results: SourceResult[], lastShown: string[] = [
   return { pool: picked.sort(newestFirst), outlets };
 }
 
-function publish(ids: string[], pool: FeedItem[], curation: "agent" | "fallback", now: number, remember: boolean) {
+/** A pick the model filed under `alerts`, still recent enough to pin above the feed. */
+function isLiveAlert(item: FeedItem, alerts: ReadonlySet<string>, now: number) {
+  return alerts.has(item.id) && now - Date.parse(item.publishedAt) < ALERT_MAX_AGE_HOURS * 3_600_000;
+}
+
+function publish(ids: string[], pool: FeedItem[], curation: "agent" | "fallback", now: number, remember: boolean, alerts: ReadonlySet<string> = new Set()) {
   const byId = new Map(pool.map((item) => [item.id, item]));
-  const items = ids.map((id) => byId.get(id)).filter((item): item is FeedItem => Boolean(item)).slice(0, MAX_ITEMS);
+  const items = ids
+    .map((id) => byId.get(id))
+    .filter((item): item is FeedItem => Boolean(item))
+    .slice(0, MAX_ITEMS)
+    .map((item) => (isLiveAlert(item, alerts, now) ? { ...item, alert: true } : item));
   if (!items.length) return;
   const state = runtime.state;
   state.items = items;
@@ -210,7 +221,7 @@ async function refresh(): Promise<void> {
 
   try {
     const outcome = await pickWithAgent(pool, state.history, now, outlets);
-    publish(outcome.ids, pool, "agent", Date.now(), true);
+    publish(outcome.ids, pool, "agent", Date.now(), true, new Set(outcome.alerts));
     state.agent = { at: new Date().toISOString(), agent: outcome.agent, model: outcome.model, ms: outcome.ms, ok: true, error: null, attempts: outcome.attempts };
   } catch (error) {
     const code = error instanceof AgentError ? error.code : "internal_error";
@@ -218,6 +229,7 @@ async function refresh(): Promise<void> {
     state.agent = { at: new Date().toISOString(), agent: null, model: null, ms: null, ok: false, error: code, attempts: error instanceof AgentError ? error.attempts : [] };
     if (agentPlan().order.length) console.warn(`[feed] AI curation failed (${code}); using the fallback ordering`);
   }
+  state.items = await labelItems(state.items);
   await save();
   // The newsworthy tokens are chosen from the same fetch, after the feed is up. It keeps its own
   // schedule (not every refresh) and its own state, and never rejects.
