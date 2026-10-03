@@ -5,8 +5,15 @@
 //
 // syncSongs() is the single entry point. It is idempotent (a persisted cursor means a message is
 // only ever handled once, across restarts too), safe to call concurrently, and never throws.
+//
+// Two things call it: the poll (ensureSongsLoop) and, while the Jarvis agent's Slack listener is up,
+// a nudge for each new message in the channel (nudgeSongs, from /api/slack/nudge). Both go through
+// the same lock and cursor in this process, which stays the only writer of .data/songs.json, so a
+// message is still queued once. While the listener is up the poll only runs every 5 minutes, as a
+// safety net, unless a request is waiting (for playback to start, say).
 
 import { getJamStatus, looksLikeJamTrigger, parseJamTrigger, recordJamTrigger, type JamStatus } from "./jam";
+import { slackListenerLive } from "./slack-live";
 import { resolveUserName } from "./slack-users";
 import { readJson, writeJson } from "./songs-store";
 import {
@@ -41,6 +48,11 @@ const MIN_RUN_INTERVAL_MS = 5_000;
 const SLACK_ERROR_BACKOFF_MS = 60_000;
 const DEFAULT_MAX_AGE_MINUTES = 30;
 const DEFAULT_POLL_SECONDS = 20;
+/** The poll while the Slack listener is up and nudges a run for every new message. */
+const LIVE_POLL_MS = 5 * 60_000;
+/** A nudged run that does not see its message yet (Slack's history lags the event) looks again. */
+const NUDGE_ATTEMPTS = 3;
+const NUDGE_RETRY_MS = 3_000;
 const PLAYLIST_RESEED_MS = 6 * 60 * 60_000;
 const PLAYLIST_SEED_RETRY_MS = 10 * 60_000;
 const MAX_KNOWN_TRACKS = 5_000;
@@ -158,7 +170,8 @@ export type SongsStatus = {
     problem: string | null;
     help: string | null;
   };
-  loop: { running: boolean; everySeconds: number };
+  /** slackListener: the Jarvis listener is up, so runs follow new messages and the poll is a 5-minute safety net. */
+  loop: { running: boolean; everySeconds: number; slackListener: boolean };
   /** The Jam invite link the QR would show, where it came from, and whether the QR is up. */
   jam: JamStatus;
   lastSyncAt: string | null;
@@ -181,6 +194,8 @@ export type SongsStatus = {
 type Runtime = {
   running?: Promise<SongsStatus>;
   lastRunAt: number;
+  /** Requests waiting after the last run; while any wait, the poll keeps its full pace. */
+  pending: number;
   timer?: ReturnType<typeof setInterval>;
   tick?: () => void;
   slackRetryAt: number;
@@ -196,6 +211,7 @@ type Runtime = {
 const globalStore = globalThis as typeof globalThis & { __babSongs?: Runtime };
 const runtime: Runtime = (globalStore.__babSongs ??= {
   lastRunAt: 0,
+  pending: 0,
   slackRetryAt: 0,
   slackCanRead: null,
   slackError: null,
@@ -953,6 +969,7 @@ async function run(): Promise<void> {
     ? [spotifyHelp(context.blocker.code), context.blocker.detail].filter(Boolean).join(" ")
     : null;
   state.lastSyncAt = new Date().toISOString();
+  runtime.pending = state.pending.length;
   await saveState(state);
 }
 
@@ -1030,7 +1047,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       problem: spotifyProblem,
       help: spotifyHelpText,
     },
-    loop: { running: Boolean(runtime.timer), everySeconds },
+    loop: { running: Boolean(runtime.timer), everySeconds, slackListener: slackListenerLive() },
     jam: await getJamStatus(),
     lastSyncAt: state.lastSyncAt,
     pending: state.pending.map((request) => ({
@@ -1076,8 +1093,27 @@ export function syncSongs(options: { force?: boolean } = {}): Promise<SongsStatu
 
 // Always point the timer at the newest copy of this module (dev-mode reloads re-run this line).
 runtime.tick = () => {
+  if (slackListenerLive() && runtime.pending === 0 && Date.now() - runtime.lastRunAt < LIVE_POLL_MS) return;
   void syncSongs();
 };
+
+/**
+ * The Slack listener saw a new message in the songs channel (`ts`, when known): run now. If the
+ * run did not get as far as that message (one was already running, or Slack's history did not
+ * have it yet), run again a few seconds later, at most NUDGE_ATTEMPTS times. Never throws.
+ */
+export async function nudgeSongs(ts: string | null = null): Promise<void> {
+  const channel = songsChannel();
+  if (!process.env.SLACK_BOT_TOKEN || !channel) return;
+  ensureSongsLoop();
+  for (let attempt = 1; attempt <= NUDGE_ATTEMPTS; attempt += 1) {
+    await syncSongs({ force: true });
+    if (!ts) return;
+    const { cursor } = await loadState(channel);
+    if (cursor !== null && compareTs(cursor, ts) >= 0) return;
+    if (attempt < NUDGE_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, NUDGE_RETRY_MS));
+  }
+}
 
 /**
  * Starts the background poll (every SONGS_POLL_SECONDS, default 20; 0 disables it). Safe to call

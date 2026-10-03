@@ -9,9 +9,14 @@
 // re-read each time rather than only what is new, so a quote that was edited or deleted in Slack
 // leaves the screen within the hour.
 //
+// While the Jarvis agent's Slack listener is up (lib/slack-live.ts), a post, edit or delete in the
+// channel nudges a re-read within about 20 seconds (nudgeQuotes) and the hourly re-read becomes a
+// six-hourly safety net. This module stays the only writer of .data/quotes.json.
+//
 // Read-only: the only Slack methods called are conversations.history and users.info.
 
 import { signedImagePath } from "./slack";
+import { slackListenerLive } from "./slack-live";
 import { resolveUserName } from "./slack-users";
 import { readJson, writeJson } from "./songs-store";
 
@@ -60,6 +65,12 @@ const STATE_FILE = "quotes.json";
 /** Raised whenever the rules for what a quote is change, so a pool built by older rules is rebuilt. */
 const STATE_VERSION = 2;
 const REFRESH_MS = 60 * 60_000;
+/** The routine re-read while the Slack listener is up and nudges a read on every change. */
+const LIVE_REFRESH_MS = 6 * 60 * 60_000;
+/** A nudge waits this long, so a burst of posts and edits is read once. */
+const NUDGE_DELAY_MS = 20_000;
+/** Nudged reads start at least this far apart (each one reads the whole window). */
+const NUDGE_MIN_GAP_MS = 2 * 60_000;
 /** After a read Slack refused (bot not in the channel, missing scope...), look again this soon. */
 const RETRY_MS = 2 * 60_000;
 /** After a read that stopped part-way (rate limit, network), top the pool up this soon. */
@@ -670,6 +681,13 @@ type Runtime = {
   loaded: Promise<void> | null;
   refreshing: Promise<void> | null;
   nextRefreshAt: number;
+  /** nextRefreshAt is the routine REFRESH_MS re-read, which the Slack listener may stretch. */
+  routine: boolean;
+  /** When the last read started. */
+  lastReadAt: number;
+  /** A nudge came in while a read was running: read again once it is done. */
+  nudgedDuringRead: boolean;
+  nudgeTimer: ReturnType<typeof setTimeout> | null;
   error: string | null;
 };
 
@@ -683,6 +701,10 @@ const runtime: Runtime = (globalStore.__babQuotes ??= {
   loaded: null,
   refreshing: null,
   nextRefreshAt: 0,
+  routine: false,
+  lastReadAt: 0,
+  nudgedDuringRead: false,
+  nudgeTimer: null,
   error: null,
 });
 
@@ -702,7 +724,10 @@ function load(): Promise<void> {
       names: stored.names && typeof stored.names === "object" ? stored.names : {},
     };
     const updated = stored.updatedAt ? Date.parse(stored.updatedAt) : NaN;
-    if (Number.isFinite(updated)) runtime.nextRefreshAt = updated + REFRESH_MS;
+    if (Number.isFinite(updated)) {
+      runtime.nextRefreshAt = updated + REFRESH_MS;
+      runtime.routine = true;
+    }
   })();
   return runtime.loaded;
 }
@@ -752,6 +777,8 @@ async function resolveNames(messages: SlackMessage[], known: Record<string, Stor
 }
 
 async function refresh(channel: string): Promise<void> {
+  runtime.lastReadAt = Date.now();
+  runtime.nudgedDuringRead = false;
   try {
     const oldestMs = oldestAllowedMs();
     const { messages, partial } = await readHistory(channel, oldestMs);
@@ -774,10 +801,13 @@ async function refresh(channel: string): Promise<void> {
     };
     runtime.error = null;
     runtime.nextRefreshAt = Date.now() + (partial ? PARTIAL_RETRY_MS : REFRESH_MS);
+    runtime.routine = !partial;
+    if (runtime.nudgedDuringRead) scheduleNudgedRead();
   } catch (error) {
     const slack = error instanceof SlackError ? error : new SlackError("unknown");
     runtime.error = slack.code;
     runtime.nextRefreshAt = Date.now() + Math.max(RETRY_MS, slack.retryAfterMs ?? 0);
+    runtime.routine = false;
     // If Slack says the bot may not read the channel, stop showing what it read earlier.
     if (isAccessError(slack.code)) runtime.state = { ...emptyState(channel), names: runtime.state.names };
     console.error(`Quotes: could not read Slack (${slack.code}). ${slackHelp(slack.code, channel)}`);
@@ -796,8 +826,45 @@ function pruneOld(): void {
   if (kept.length === runtime.state.quotes.length) return;
   runtime.state = { ...runtime.state, quotes: kept };
   runtime.nextRefreshAt = 0;
+  runtime.routine = false;
   // A read that is already running writes the file itself when it finishes.
   if (!runtime.refreshing) void save();
+}
+
+/** When the next read is due: the routine one is stretched while the Slack listener is up. */
+function dueAt(): number {
+  return runtime.routine && slackListenerLive() ? runtime.nextRefreshAt - REFRESH_MS + LIVE_REFRESH_MS : runtime.nextRefreshAt;
+}
+
+/** Brings the next read forward to NUDGE_DELAY_MS from now (NUDGE_MIN_GAP_MS after the last one) and starts it then. */
+function scheduleNudgedRead(): void {
+  const at = Math.max(Date.now() + NUDGE_DELAY_MS, runtime.lastReadAt + NUDGE_MIN_GAP_MS);
+  if (runtime.routine || at < runtime.nextRefreshAt) {
+    runtime.nextRefreshAt = runtime.routine ? at : Math.min(runtime.nextRefreshAt, at);
+    runtime.routine = false;
+  }
+  if (runtime.nudgeTimer) clearTimeout(runtime.nudgeTimer);
+  runtime.nudgeTimer = setTimeout(() => {
+    runtime.nudgeTimer = null;
+    void getQuotes(1);
+  }, Math.max(0, runtime.nextRefreshAt - Date.now()) + 50);
+  runtime.nudgeTimer.unref?.();
+}
+
+/**
+ * The Slack listener saw a post, edit or delete in the quotes channel: read it again soon rather
+ * than at the next routine read. A read Slack refused keeps its back-off. Never throws.
+ */
+export async function nudgeQuotes(): Promise<void> {
+  if (!process.env.SLACK_BOT_TOKEN || !quotesChannel()) return;
+  try {
+    await load();
+    if (runtime.error) return;
+    if (runtime.refreshing) runtime.nudgedDuringRead = true;
+    else scheduleNudgedRead();
+  } catch {
+    // The routine read still happens.
+  }
 }
 
 function sample<T>(items: readonly T[], count: number): T[] {
@@ -832,14 +899,16 @@ export async function getQuotes(count: number = DEFAULT_BATCH): Promise<QuotesRe
       runtime.state = { ...emptyState(channel), names: runtime.state.names };
       runtime.error = null;
       runtime.nextRefreshAt = 0;
+      runtime.routine = false;
     }
     if (runtime.state.version !== STATE_VERSION) {
       // Held in memory by a server that was running before the rules changed: serve it, but read again now.
       runtime.state = { ...runtime.state, version: STATE_VERSION };
       runtime.nextRefreshAt = 0;
+      runtime.routine = false;
     }
     pruneOld();
-    if (!runtime.refreshing && Date.now() >= runtime.nextRefreshAt) {
+    if (!runtime.refreshing && Date.now() >= dueAt()) {
       runtime.refreshing = refresh(channel).finally(() => {
         runtime.refreshing = null;
       });

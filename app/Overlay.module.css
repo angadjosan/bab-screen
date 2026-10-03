@@ -1,0 +1,203 @@
+/*
+ * Overlays on top of the stage (app/Overlay.tsx, app/PersonCard.tsx). They sit inside .dashboard, so they are
+ * laid out in the stage's 1920x1080 pixels and scaled with it. Above the tiles, below the coin flip's full-screen
+ * stage (z-index 20 in CoinFlip.module.css), which wins while a game is on.
+ */
+
+/* --- Banner: a strip along the bottom of the stage ------------------------------------------- */
+
+.banner {
+  position: absolute;
+  left: var(--bab-row);
+  right: var(--bab-row);
+  bottom: var(--bab-row);
+  z-index: 15;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 28px;
+  padding: 28px 36px 34px;
+  border: var(--bab-hair) solid var(--line-strong);
+  border-left: 6px solid var(--bab-gold);
+  background: var(--bab-black-alt);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  animation: rise var(--bab-slow) var(--bab-ease);
+}
+
+.bannerKicker {
+  color: var(--bab-gold);
+  font: 600 22px/30px var(--mono);
+  text-transform: uppercase;
+}
+
+.bannerText {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  font: 500 44px/54px var(--display);
+}
+
+/* Time left, as the Jam QR shows it (globals.css .jam-drain). */
+.drain {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  overflow: hidden;
+}
+
+.drain span {
+  display: block;
+  height: 100%;
+  background: var(--bab-gold);
+  transform-origin: left;
+  animation: drain linear forwards;
+}
+
+@keyframes drain {
+  from { transform: scaleX(var(--from, 1)); }
+  to { transform: scaleX(0); }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+}
+
+/* --- Person card: the middle of the stage, the tiles dimmed behind it ------------------------- */
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.62);
+  animation: fade var(--bab-slow) linear;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.person {
+  width: 1180px;
+  max-height: 760px;
+  display: flex;
+  gap: 48px;
+  padding: 48px;
+  overflow: hidden;
+  border: var(--bab-hair) solid var(--line-strong);
+  border-top: 6px solid var(--bab-gold);
+  background: var(--bab-black-alt);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.7);
+  animation: rise var(--bab-slow) var(--bab-ease);
+}
+
+.photo {
+  flex: none;
+  width: 320px;
+  height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--bab-surface-1);
+}
+
+/* Shown as it is, in full colour, as covers and spotted photos are. */
+.photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.personBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kicker {
+  color: var(--faint);
+  font: 400 22px/30px var(--mono);
+  text-transform: uppercase;
+}
+
+.name {
+  margin-top: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 72px/84px var(--display);
+}
+
+.headline {
+  margin-top: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font: 500 32px/42px var(--sans);
+}
+
+.summary {
+  margin-top: 22px;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 28px;
+  line-height: 38px;
+}
+
+.links {
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.link {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  padding: 12px 0 13px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.linkLabel {
+  flex: none;
+  min-width: 160px;
+  color: var(--faint);
+  font: 400 20px/28px var(--mono);
+  text-transform: uppercase;
+}
+
+.linkUrl {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font: 400 24px/28px var(--sans);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner,
+  .scrim,
+  .person,
+  .drain span {
+    animation: none;
+  }
+}

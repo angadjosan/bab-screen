@@ -328,6 +328,16 @@ export async function getTrack(id: string): Promise<Track | null> {
   }
 }
 
+/** Tracks matching a free-text search, best first (used by the Jarvis agent's "queue X"). */
+export async function searchTracks(query: string, limit = 5): Promise<Track[]> {
+  const payload = await api<{ tracks?: { items?: ApiTrack[] } }>("GET", "/search", {
+    q: query.slice(0, 200),
+    type: "track",
+    limit: String(Math.max(1, Math.min(10, limit))),
+  });
+  return (payload?.tracks?.items ?? []).map(toTrack).filter((track): track is Track => track !== null);
+}
+
 /**
  * Adds a track to the end of the user's queue on whichever device is currently active.
  * Throws SpotifyError("no_active_device") when nothing is playing anywhere.

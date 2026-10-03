@@ -1,0 +1,5 @@
+# Voice daemon (voice/daemon.py). Installed into voice/.venv by voice/setup.sh.
+openwakeword==0.6.0
+onnxruntime>=1.17,<2
+sounddevice>=0.4.6
+numpy>=1.24

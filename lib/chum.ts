@@ -6,6 +6,7 @@
 // name lookups, so a failure here never reaches /api/spot or /api/quotes.
 
 import { SlackApiError, isImageFile, signedImagePath, slackGet, type SlackMessage } from "./slack";
+import { nudgeCount, slackListenerLive } from "./slack-live";
 import { describeSpot } from "./slack-users";
 
 /** How many photos /api/chum returns (newest first). */
@@ -38,6 +39,8 @@ export type ChumResult = {
 
 const OK_TTL_MS = 60_000;
 const RETRY_TTL_MS = 20_000;
+/** While the agent's Slack listener is up (lib/slack-live.ts) a new post nudges a re-read; this is the safety net. */
+const LIVE_OK_TTL_MS = 10 * 60_000;
 
 /** Slack emoji codes (":fire:", ":wave::skin-tone-3:") and bare links say nothing on a TV. */
 function tidyText(text: string | null): string | null {
@@ -135,16 +138,22 @@ async function fetchChum(): Promise<Fetched> {
   }
 }
 
-let cached: { value: ChumResult; expiresAt: number } | undefined;
+// nudges is the nudge count when the read started, so a nudge that lands during a read still causes another one.
+let cached: { value: ChumResult; expiresAt: number; nudges: number } | undefined;
 let inFlight: Promise<ChumResult> | undefined;
 
-/** The newest chumming photos. Asks Slack at most once a minute per server process. Never throws. */
+/**
+ * The newest chumming photos. Asks Slack at most once a minute per server process, or once every
+ * ten minutes while the Jarvis listener is up and says when the channel changes. Never throws.
+ */
 export async function getChumPhotos(): Promise<ChumResult> {
-  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  if (cached && Date.now() < cached.expiresAt && cached.nudges === nudgeCount("chum")) return cached.value;
   if (!inFlight) {
+    const nudges = nudgeCount("chum");
     inFlight = fetchChum()
       .then(({ value, ttlMs }) => {
-        cached = { value, expiresAt: Date.now() + ttlMs };
+        const ttl = ttlMs === OK_TTL_MS && slackListenerLive() ? LIVE_OK_TTL_MS : ttlMs;
+        cached = { value, expiresAt: Date.now() + ttl, nudges };
         return value;
       })
       .finally(() => {

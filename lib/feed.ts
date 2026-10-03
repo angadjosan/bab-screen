@@ -22,6 +22,7 @@ import {
   REFRESH_MINUTES,
   TARGET_ITEMS,
 } from "./feed-sources";
+import { readInterests } from "./interests";
 import { refreshNewsworthy } from "./newsworthy";
 import { readJson, writeJson } from "./songs-store";
 import type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
@@ -209,7 +210,9 @@ async function refresh(): Promise<void> {
   if (!state.items.length) publish(fallbackOrder(pool, state.history), pool, "fallback", now, false);
 
   try {
-    const outcome = await pickWithAgent(pool, state.history, now, outlets);
+    // Lean toward what the people in the room care about (Jarvis's memory; null without it).
+    const interests = agentPlan().order.length ? readInterests(now) : null;
+    const outcome = await pickWithAgent(pool, state.history, now, outlets, interests);
     publish(outcome.ids, pool, "agent", Date.now(), true);
     state.agent = { at: new Date().toISOString(), agent: outcome.agent, model: outcome.model, ms: outcome.ms, ok: true, error: null, attempts: outcome.attempts };
   } catch (error) {

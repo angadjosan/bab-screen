@@ -6,21 +6,28 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "jarvis": "tsx agent/index.ts",
+    "jarvis:selftest": "tsx agent/selftest.ts"
   },
   "dependencies": {
+    "@slack/bolt": "^5.1.0",
+    "better-sqlite3": "^13.0.3",
     "ical.js": "^2.2.1",
     "lucide-react": "^0.468.0",
     "next": "^15.5.0",
+    "openai": "^7.27.0",
     "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "viem": "^2.57.2"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.0"
   }
 }

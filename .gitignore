@@ -30,3 +30,10 @@ id_ed25519*
 
 # local runtime state (Spotify tokens, song request cursor)
 .data
+
+# voice daemon: virtualenv and downloaded whisper model (voice/setup.sh)
+voice/.venv
+voice/models
+
+# python bytecode
+__pycache__/

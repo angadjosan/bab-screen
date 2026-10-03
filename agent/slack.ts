@@ -1,0 +1,153 @@
+// The Slack listener: @slack/bolt in Socket Mode (no public URL). @mentions and DMs run a turn and
+// get the answer in a thread. Every channel message (message.channels) also goes to the handlers
+// registered with onChannelMessage(): the scheduler's busy-thread watcher, and agent/feeds.ts, which
+// nudges the Next app to re-read the spots, chumming, quotes and songs channels when they change.
+
+import { App, LogLevel } from "@slack/bolt";
+import { looksLikeJamTrigger } from "../lib/jam";
+import { resolveUserName } from "../lib/slack-users";
+import { findTrackLinks } from "../lib/spotify";
+import { config } from "./config";
+import { upsertMember } from "./db";
+import { slackText } from "./threads";
+import { runTurn } from "./turn";
+import { postMessage } from "./slack-api";
+
+export type ChannelMessage = {
+  channel: string;
+  ts: string;
+  threadTs: string | null;
+  user: string | null;
+  botId: string | null;
+  subtype: string | null;
+  text: string;
+  /** True when the message @mentions Jarvis (it is also handled as a request). */
+  mentionsBot: boolean;
+  raw: Record<string, unknown>;
+};
+
+export type ChannelHandler = (message: ChannelMessage) => void | Promise<void>;
+
+const handlers: Array<{ name: string; channel: string | null; handler: ChannelHandler }> = [];
+
+/** Routes channel messages (optionally only one channel's) to `handler`. Errors are logged, never thrown. */
+export function onChannelMessage(name: string, handler: ChannelHandler, channel: string | null = null) {
+  handlers.push({ name, channel, handler });
+}
+
+async function dispatch(message: ChannelMessage) {
+  for (const entry of handlers) {
+    if (entry.channel && entry.channel !== message.channel) continue;
+    try {
+      await entry.handler(message);
+    } catch (error) {
+      console.error(`[jarvis] channel handler ${entry.name} failed:`, error);
+    }
+  }
+}
+
+let app: App | null = null;
+let botUserId: string | null = null;
+let connected = false;
+
+export const slackStatus = () => ({ listening: connected, botUserId });
+
+/**
+ * A mention in the songs channel with a track link or "jam" is the Next app's (lib/songs.ts reads it
+ * from the channel and queues it, or shows the Jam QR). Running a turn as well would queue it twice.
+ */
+export function songsChannelOwns(event: { channel: string; text?: string; thread_ts?: string; ts?: string }, songsChannel = config.songsChannel()): boolean {
+  if (!songsChannel || event.channel !== songsChannel || !event.text) return false;
+  if (event.thread_ts && event.thread_ts !== event.ts) return false; // thread replies are not song requests
+  return findTrackLinks(event.text).length > 0 || looksLikeJamTrigger(event.text);
+}
+
+async function handleRequest(event: { user?: string; text?: string; channel: string; ts: string; thread_ts?: string }, place: "dm" | "channel") {
+  if (!event.user || !event.text) return;
+  if (place === "channel" && songsChannelOwns(event)) return;
+  const name = await resolveUserName(event.user);
+  upsertMember(event.user, name);
+  const text = await slackText(event.text.replace(new RegExp(`<@${botUserId}(?:\\|[^>]*)?>`, "g"), "").trim(), 2_000);
+  // In a channel the answer goes in a thread under the mention; in a DM, in the same thread if there is one.
+  const threadTs = event.thread_ts ?? (place === "channel" ? event.ts : null);
+  const result = await runTurn({ text, rawText: event.text, source: "slack", userId: event.user, userName: name, channel: event.channel, threadTs, place });
+  if (result.reply && !result.alreadyReplied) {
+    try {
+      await postMessage(event.channel, result.reply, threadTs);
+    } catch (error) {
+      console.error("[jarvis] Slack reply failed:", error);
+    }
+  }
+}
+
+/** Starts Socket Mode if both tokens are set. Returns false (and logs why) otherwise. */
+export async function startSlack(): Promise<boolean> {
+  const appToken = config.slackAppToken();
+  const botToken = config.slackBotToken();
+  if (!appToken || !botToken) {
+    console.warn(`[jarvis] Slack listener off: ${!appToken ? "SLACK_APP_TOKEN (xapp-)" : "SLACK_BOT_TOKEN"} is not set.`);
+    return false;
+  }
+  if (!appToken.startsWith("xapp-")) {
+    console.warn("[jarvis] Slack listener off: SLACK_APP_TOKEN must be an app-level token (xapp-...) with connections:write.");
+    return false;
+  }
+
+  app = new App({ token: botToken, appToken, socketMode: true, logLevel: LogLevel.WARN });
+
+  app.event("app_mention", async ({ event }) => {
+    await handleRequest(event as { user?: string; text?: string; channel: string; ts: string; thread_ts?: string }, "channel");
+  });
+
+  app.message(async ({ message }) => {
+    const raw = message as unknown as Record<string, unknown>;
+    const channel = String(raw.channel ?? "");
+    const ts = String(raw.ts ?? "");
+    const text = typeof raw.text === "string" ? raw.text : "";
+    const user = typeof raw.user === "string" ? raw.user : null;
+    const subtype = typeof raw.subtype === "string" ? raw.subtype : null;
+    const botId = typeof raw.bot_id === "string" ? raw.bot_id : null;
+    if (user && user === botUserId) return;
+
+    if (raw.channel_type === "im") {
+      // Only plain messages typed by a person; edits, joins and bot posts are not requests.
+      if (!subtype && !botId && user) await handleRequest({ user, text, channel, ts, thread_ts: typeof raw.thread_ts === "string" ? raw.thread_ts : undefined }, "dm");
+      return;
+    }
+    // Channel messages: requests arrive as app_mention, so here they are only routed to handlers.
+    await dispatch({
+      channel,
+      ts,
+      threadTs: typeof raw.thread_ts === "string" ? raw.thread_ts : null,
+      user,
+      botId,
+      subtype,
+      text,
+      mentionsBot: Boolean(botUserId && text.includes(`<@${botUserId}`)),
+      raw,
+    });
+  });
+
+  app.error(async (error) => {
+    console.error("[jarvis] Slack error:", error);
+  });
+
+  try {
+    await app.start();
+    const auth = await app.client.auth.test();
+    botUserId = (auth.user_id as string | undefined) ?? null;
+    connected = true;
+    console.log(`[jarvis] Slack listener connected (Socket Mode) as ${auth.user ?? botUserId}.`);
+    return true;
+  } catch (error) {
+    console.error("[jarvis] Slack listener failed to start:", error instanceof Error ? error.message : error);
+    app = null;
+    return false;
+  }
+}
+
+export async function stopSlack() {
+  connected = false;
+  await app?.stop().catch(() => undefined);
+  app = null;
+}

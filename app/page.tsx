@@ -1,13 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { ScreenState } from "../lib/screen-state";
 import { ChumCaption, chumAlt, createChumDeck, useChumPhotos, type ChumDeck } from "./Chum";
 import { CoinFlip } from "./CoinFlip";
 import { Events } from "./Events";
 import { Feed } from "./Feed";
+import { Game } from "./Game";
+import { Leaderboard } from "./Leaderboard";
 import { FeaturedMarket, MarketsProvider, TickerTape } from "./Markets";
 import { NowPlaying } from "./NowPlaying";
+import { Overlays } from "./Overlay";
+import { PinnedThread } from "./PinnedThread";
 import { QuoteCaption, QuoteFrame, useQuoteDeck, type Quote } from "./Quotes";
+import { PRESET_LAYOUTS, SLOTS, WIDGETS, fits, isWidgetId, type Layout, type WidgetId } from "./widgets/registry";
+import widgetStyles from "./widgets/Widgets.module.css";
 
 type Spot = {
   id: string;
@@ -381,11 +388,94 @@ function SpotCard({ spot, loading }: { spot: SpotResponse | null; loading: boole
   );
 }
 
+/** Wait this long before reconnecting to the screen stream after it drops. */
+const STREAM_RETRY_MS = 3_000;
+/** Out of touch with the server this long, the page goes back to the default layout with no overlays. */
+const STREAM_FALLBACK_MS = 60_000;
+
+/**
+ * What the server says the screen shows (lib/screen-state.ts), from one EventSource on /api/screen/stream; null
+ * until the first message, and again after a long drop, which the page treats as the default preset. A short
+ * drop keeps the last layout up while it reconnects.
+ */
+function useScreenState(): ScreenState | null {
+  const [state, setState] = useState<ScreenState | null>(null);
+
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let retry: number | undefined;
+    let fallback: number | undefined;
+    // Within one connection a state older than the last one (sent on connect while a change was going out) is
+    // ignored; a new connection starts over, since the server may have started over too.
+    let version = -1;
+
+    const connect = () => {
+      version = -1;
+      source = new EventSource("/api/screen/stream");
+      source.onmessage = (event) => {
+        try {
+          const next = JSON.parse(event.data) as ScreenState;
+          if (typeof next?.version !== "number" || next.version < version) return;
+          version = next.version;
+          window.clearTimeout(fallback);
+          fallback = undefined;
+          setState(next);
+        } catch {
+          // Not a state: ignore it, the next change sends the whole state again.
+        }
+      };
+      // EventSource retries by itself after a dropped connection, but not after an error status; closing and
+      // opening a new one covers both.
+      source.onerror = () => {
+        source?.close();
+        window.clearTimeout(retry);
+        retry = window.setTimeout(connect, STREAM_RETRY_MS);
+        fallback ??= window.setTimeout(() => setState(null), STREAM_FALLBACK_MS);
+      };
+    };
+
+    connect();
+    return () => {
+      source?.close();
+      window.clearTimeout(retry);
+      window.clearTimeout(fallback);
+    };
+  }, []);
+
+  return state;
+}
+
+/** Whether a widget that needs data has some to show. */
+function hasData(widget: WidgetId, state: ScreenState | null): boolean {
+  if (widget === "leaderboard") return Boolean(state?.leaderboard?.rows.length);
+  if (widget === "pinned_thread") return Boolean(state?.pinnedThread);
+  if (widget === "game") return Boolean(state?.game);
+  return true;
+}
+
+/**
+ * The widget each slot shows. Anything the page does not know or that does not fit, and a widget with nothing to
+ * show (no leaderboard, no pinned thread), gives the slot back to what the default preset puts there.
+ */
+function resolveLayout(state: ScreenState | null): Layout {
+  const fallback = PRESET_LAYOUTS.default;
+  const layout = { ...fallback };
+  for (const slot of SLOTS) {
+    const widget: unknown = state?.slots?.[slot];
+    if (!isWidgetId(widget) || !fits(widget, slot)) continue;
+    if (WIDGETS[widget].needsData && !hasData(widget, state)) continue;
+    layout[slot] = widget;
+  }
+  return layout;
+}
+
 export default function Dashboard() {
   const [spot, setSpot] = useState<SpotResponse | null>(null);
   const [loading, setLoading] = useState(true);
   // The calendar block is given room only while it has events to list (not while the calendar is unconnected or empty).
   const [hasEvents, setHasEvents] = useState(false);
+  const screen = useScreenState();
+  const layout = resolveLayout(screen);
 
   const refresh = useCallback(async () => {
     try {
@@ -411,27 +501,50 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", fit);
   }, []);
 
+  /**
+   * A widget for one of the slots that fill a box. The one the default preset puts there (`home`) is drawn bare,
+   * exactly as it always was; anything else goes in a box that fills the slot.
+   */
+  const widget = (id: WidgetId, home: WidgetId): ReactNode => {
+    let node: ReactNode;
+    switch (id) {
+      case "feed": node = <Feed />; break;
+      case "carousel": node = <SpotCard spot={spot} loading={loading} />; break;
+      case "featured_market": node = <FeaturedMarket />; break;
+      case "events": node = <Events />; break;
+      case "leaderboard": node = screen?.leaderboard ? <Leaderboard board={screen.leaderboard} /> : null; break;
+      case "pinned_thread": node = screen?.pinnedThread ? <PinnedThread thread={screen.pinnedThread} /> : null; break;
+      case "game": node = screen?.game ? <Game game={screen.game} /> : null; break;
+      default: node = null;
+    }
+    if (id === home) return node;
+    return <div key={id} className={widgetStyles.fill}>{node}</div>;
+  };
+
   return (
     <MarketsProvider>
       <main className="dashboard">
         <div className="top-row">
           <img className="brand-logo" src="/bab-logo.svg" alt="Blockchain at Berkeley" width={344} height={311} />
-          <div className="tape-slot"><TickerTape /></div>
+          <div className="tape-slot">{layout.tape === "ticker" && <TickerTape />}</div>
         </div>
         <div className="feed-slot">
-          <div className="feed-box"><Feed /></div>
-          <CoinFlip />
+          <div className="feed-box">{widget(layout.left, "feed")}</div>
+          {layout.left_bottom === "coin_flip" && <CoinFlip />}
         </div>
-        <div className="featured-slot"><FeaturedMarket /></div>
+        <div className="featured-slot">{widget(layout.center, "featured_market")}</div>
         <div className="side-slot">
-          <NowPlaying />
-          <SpotCard spot={spot} loading={loading} />
-          <div className={`events-slot ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents}>
-            <div className="events-box">
-              <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
+          {layout.side_top === "now_playing" && <NowPlaying />}
+          {widget(layout.side, "carousel")}
+          {layout.side_bottom === "events" && (
+            <div className={`events-slot ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents}>
+              <div className="events-box">
+                <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
+              </div>
             </div>
-          </div>
+          )}
         </div>
+        <Overlays overlays={screen?.overlays ?? []} />
       </main>
     </MarketsProvider>
   );
