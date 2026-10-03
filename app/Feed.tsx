@@ -50,6 +50,7 @@ function clean(raw: unknown): FeedItem[] {
       publishedAt: text(item.publishedAt) ?? "",
       // Thumbnails are not shown: in a column this narrow they add load and noise without helping anyone read.
       imageUrl: null,
+      alert: item.alert === true,
     });
     if (items.length === MAX_ITEMS) break;
   }
@@ -105,6 +106,35 @@ function age(publishedAt: string, now: number) {
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h ago`;
   if (minutes < 60 * 24 * 7) return `${Math.floor(minutes / (60 * 24))}d ago`;
   return new Date(published).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** The server pins alerts for ALERT_MAX_AGE_HOURS (lib/feed-sources.ts); the page holds to the same limit on its own clock. */
+const ALERT_MAX_AGE_MS = 12 * 60 * 60_000;
+const MAX_ALERTS = 2;
+
+function isPinned(item: FeedItem, now: number) {
+  return item.alert === true && now - Date.parse(item.publishedAt) < ALERT_MAX_AGE_MS;
+}
+
+/** A current safety incident on or near campus, held above the scrolling list so nobody has to wait for it to come round. */
+function Alerts({ items, now }: { items: FeedItem[]; now: number }) {
+  return (
+    <ol className="feed-alerts" aria-label="Campus safety">
+      {items.map((item) => {
+        const when = age(item.publishedAt, now);
+        return (
+          <li key={item.id} className="feed-alert">
+            <span className="feed-meta">
+              <span className="feed-alert-mark" aria-hidden="true" />
+              <span className="feed-source" dir="auto">{item.source}</span>
+              {when && <time className="feed-time" dateTime={new Date(Date.parse(item.publishedAt)).toISOString()}>{when}</time>}
+            </span>
+            <span className="feed-alert-title" dir="auto">{shorten(item.title)}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 function useReducedMotion() {
@@ -183,6 +213,7 @@ function Note({ story, on, now }: { story: Story; on: boolean; now: number }) {
  */
 export function Feed() {
   const [halves, setHalves] = useState<Half[]>([]);
+  const [alerts, setAlerts] = useState<FeedItem[]>([]);
   const [note, setNote] = useState<Note>("loading");
   const [now, setNow] = useState(() => Date.now());
   const [paging, setPaging] = useState<{ pages: Page[]; index: number }>({ pages: [], index: 0 });
@@ -240,7 +271,10 @@ export function Feed() {
         if (!response.ok) throw new Error("Feed request failed");
         const body = (await response.json()) as Partial<FeedResponse> | null;
         if (!alive) return;
-        const items = clean(body?.items);
+        const all = clean(body?.items);
+        const pinned = all.filter((item) => isPinned(item, Date.now())).slice(0, MAX_ALERTS);
+        const items = all.filter((item) => !pinned.includes(item));
+        setAlerts((current) => (current.map((item) => item.id).join() === pinned.map((item) => item.id).join() ? current : pinned));
         if (items.length) { lastGood = performance.now(); receive(items); }
         else failure = body?.status === "error" ? "error" : "empty";
       } catch {
@@ -384,10 +418,14 @@ export function Feed() {
     </section>
   );
 
+  const shownAlerts = alerts.filter((item) => isPinned(item, now));
   return (
-    <div className={styles.column}>
-      <div className={covered ? `${styles.layer} ${styles.away}` : styles.layer} aria-hidden={covered || undefined}>{list}</div>
-      {noted && <Note story={noted} on={covered} now={now} />}
+    <div className="feed-column">
+      {shownAlerts.length > 0 && <Alerts items={shownAlerts} now={now} />}
+      <div className={styles.column}>
+        <div className={covered ? `${styles.layer} ${styles.away}` : styles.layer} aria-hidden={covered || undefined}>{list}</div>
+        {noted && <Note story={noted} on={covered} now={now} />}
+      </div>
     </div>
   );
 }

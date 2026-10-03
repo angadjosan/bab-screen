@@ -21,6 +21,8 @@ export type FeedItem = {
   publishedAt: string;
   /** https thumbnail, or null. */
   imageUrl: string | null;
+  /** A current safety incident on or near campus: pinned above the scrolling feed. Only set on served items. */
+  alert?: boolean;
 };
 
 export type FeedSourceStatus = {

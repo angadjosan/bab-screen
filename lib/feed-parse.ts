@@ -302,6 +302,7 @@ const FILLER_TITLE: RegExp[] = [
   /\b(price target|could (hit|reach|top)|will (hit|reach|top)|set to (hit|reach|top)|on track (to|for)|hitting|eyes) \$[\d,.]+/i,
   /\bto \$[\d,.]+\s?(k|m|million|billion|trillion)? by (20\d\d|year[- ]end|eoy)\b/i,
   /\bwhat happened in crypto today\b/i,
+  /^\s*(morning minute|daily (digest|recap|roundup|debrief)|week(ly)? (recap|roundup|in review)|this week in (crypto|defi|web3|ai))\s*[:|-]/i,
   /\b\d+%\s+(upside|downside)\b|\bsees\b.{0,60}\b(upside|hitting|reaching)\b/i,
   /\b(presale|pre-sale|ico) (raises|hits|surpasses|nears|ends|live)\b/i,
   /\b(giveaway|free airdrop|claim your|promo code|bonus code|referral code|sign-?up bonus)\b/i,
