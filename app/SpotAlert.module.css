@@ -1,0 +1,202 @@
+/*
+ * Spot alerts (app/SpotAlert.tsx): the list of the last hour's spots under the feed, and the full-screen takeover
+ * when a new one is posted. Colours and faces are the page's own (--ink, --muted, --faint, --line, --display,
+ * --mono in globals.css); gold marks a spot that is new.
+ */
+
+.recent {
+  flex: none;
+  padding-top: 24px;
+  border-top: var(--bab-hair) solid var(--line);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  animation: rise .6s var(--bab-ease) both;
+}
+
+.marker {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: var(--line-strong);
+}
+
+.marker.fresh {
+  background: var(--bab-gold);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+.rowBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.rowNames {
+  overflow: hidden;
+  font: 500 30px/36px var(--display);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rowMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.rowBy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowTime {
+  flex: none;
+  color: var(--faint);
+  font: 400 18px/1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+
+/* Fixed inside the scaled 1920x1080 stage, so it covers the stage like the coin flip does. */
+.takeover {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 80px;
+  padding: 0 96px;
+  overflow: hidden;
+  background: var(--bab-black-alt);
+  animation: fade .4s ease-out;
+}
+
+.photo {
+  flex: none;
+  width: 1040px;
+  height: 760px;
+  overflow: hidden;
+  border: var(--bab-hair) solid var(--line);
+  background: var(--bab-surface-1);
+  animation: rise .7s var(--bab-ease) both;
+}
+
+.photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.words {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.headline {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font: 500 96px/1 var(--display);
+  text-wrap: balance;
+  animation: rise .7s var(--bab-ease) .15s both;
+}
+
+.headline.long {
+  font-size: 64px;
+}
+
+.note {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 34px;
+  line-height: 1.3;
+  animation: rise .7s var(--bab-ease) .25s both;
+}
+
+.credit {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  font-size: 34px;
+  font-weight: 500;
+  animation: rise .7s var(--bab-ease) .35s both;
+}
+
+.age {
+  color: var(--faint);
+  font: 400 26px/1 var(--mono);
+  text-transform: uppercase;
+}
+
+/* Runs down over the takeover's 12 seconds; its duration is set inline from TAKEOVER_MS. */
+.countdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  background: var(--bab-gold);
+  transform-origin: left;
+  animation: countdown linear both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: .45;
+  }
+}
+
+@keyframes countdown {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row,
+  .marker.fresh,
+  .takeover,
+  .photo,
+  .headline,
+  .note,
+  .credit {
+    animation: none;
+  }
+}
