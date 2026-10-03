@@ -1,3 +1,5 @@
+B@b TV - poker mode (buyin via crypto on QR code)
+
 - small things
     - Add albums from retreats
     - fix the codex setup / tokens setup

@@ -1,5 +1,7 @@
 # B@B Jarvis plan
 
+Spotify full control - play, pause, etc, play new jam
+
 One agent on the Mac mini that controls the TV. Talk to it by Slack or by voice.
 
 ## 1. Widgets (do first)
@@ -32,7 +34,7 @@ One agent on the Mac mini that controls the TV. Talk to it by Slack or by voice.
 ## 7. Games
 - Generic leaderboard widget: any title, names, scores.
 - Poker: buy-ins, stacks, payouts.
-- Mafia: roles DM'd in Slack, the TV runs day and night. This is a game that runs in a short period of time.
+- Mafia: roles DM'd in Slack, the TV runs day and night. This is a game that runs in a short period of time
 
 ## Cut
 - Camera, face recognition, polaroid.
