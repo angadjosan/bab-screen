@@ -38,8 +38,13 @@ export async function GET(request: NextRequest) {
   const code = params.get("code");
   if (!code) return page("Spotify login failed", "Spotify did not send an authorization code.", 400);
 
+  // The code is only good with the redirect URI the login sent, and that is the address of this
+  // very page (the login made sure of it before sending the user to Spotify).
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
+  const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || request.nextUrl.protocol.replace(/:$/, "");
+  const redirect = process.env.SPOTIFY_REDIRECT_URI?.trim() || new URL(request.nextUrl.pathname, `${proto}://${host}`).toString();
   try {
-    await exchangeCode(code);
+    await exchangeCode(code, redirect);
   } catch (error) {
     const reason = error instanceof SpotifyError ? error.code : "unexpected_error";
     console.error("Spotify code exchange failed:", reason);

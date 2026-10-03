@@ -1,9 +1,7 @@
-// Who asked for the track that is playing: a read-only lookup in the song-request log (.data/songs.json).
-// It only reads that one local file. No Slack or Spotify call is made, and nothing here can throw.
+// Who asked for the track that is playing: a read-only lookup in the song-request log (songs.json
+// in the store, lib/store.ts). No Slack or Spotify call is made, and nothing here can throw.
 
-import { readFile, stat } from "node:fs/promises";
-import path from "node:path";
-import { dataDir } from "./songs-store";
+import { modifiedAt, readJsonStrict } from "./store";
 
 const STATE_FILE = "songs.json";
 /** A request older than this is not credited: the same track coming up again a day later was not "queued by" them. */
@@ -55,21 +53,22 @@ export function pickCredit(index: CreditIndex, trackId: unknown, now: number): S
 }
 
 let cache: { key: string; index: CreditIndex } | null = null;
+/** With Redis there is no modification time to compare, so the log is read at most this often. */
+const REREAD_MS = 5_000;
 
-// The file is re-parsed only when it has changed on disk (the song loop rewrites it, atomically, about every 20 s);
-// otherwise this costs one stat().
+// The log is re-parsed only when it has changed (the song job rewrites it about every 20 s): for
+// files that costs one stat(); with Redis the copy is kept for REREAD_MS.
 async function loadIndex(): Promise<CreditIndex | null> {
-  const file = path.join(dataDir(), STATE_FILE);
   try {
-    const info = await stat(file);
-    const key = `${info.ino}:${info.mtimeMs}:${info.size}`;
+    const mtime = await modifiedAt(STATE_FILE);
+    const key = mtime === null ? `t${Math.floor(Date.now() / REREAD_MS)}` : `m${mtime}`;
     if (cache?.key !== key) {
-      const state = JSON.parse(await readFile(file, "utf8")) as { log?: unknown } | null;
-      cache = { key, index: buildCreditIndex(state?.log) };
+      const state = await readJsonStrict<{ log?: unknown }>(STATE_FILE);
+      // No document: there are no requests.
+      cache = state ? { key, index: buildCreditIndex(state.log) } : null;
     }
-  } catch (error) {
-    // No file: there are no requests. Anything else (unreadable, half-written): keep the last good copy.
-    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") cache = null;
+  } catch {
+    // Unreadable or half-written: keep the last good copy.
   }
   return cache?.index ?? null;
 }

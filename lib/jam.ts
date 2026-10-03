@@ -3,11 +3,11 @@
 //
 // Spotify has no API for Jams, so nothing here starts, finds or checks one. The Jam is started by
 // hand in the Spotify app and its invite link is given to the server: SPOTIFY_JAM_URL in
-// .env.local, or "@bot jam <link>" in Slack, which is stored in .data/jam.json and wins over the
+// .env.local, or "@bot jam <link>" in Slack, which is stored as jam.json (lib/store.ts) and wins over the
 // env var. The Slack side (reading the channel, knowing the bot's user ID) is in lib/songs.ts.
 
 import qrcode from "qrcode-generator";
-import { readJson, writeJson } from "./songs-store";
+import { readJson, writeJson } from "./store";
 
 const STATE_FILE = "jam.json";
 /** How long the QR stays up, counted from the moment the server sees the message. */

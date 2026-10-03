@@ -9,10 +9,13 @@
 // per event without paying for extended thinking: the display takes a few stories from each
 // group and only the first number of each.
 //
-// Who is asked (FEED_AGENT): "codex" (the default) runs OpenAI's Codex CLI; "claude" uses the
-// Messages API when ANTHROPIC_API_KEY is set and otherwise the `claude` CLI (Claude Code); "off"
-// asks nobody. If the chosen one fails, is missing or is slow, the other is tried once, and if
-// that fails too the caller uses fallbackOrder(). Both CLIs run without a shell, in an empty
+// Who is asked (FEED_AGENT): "codex" runs OpenAI's Codex CLI; "claude" uses the Messages API when
+// ANTHROPIC_API_KEY is set and otherwise the `claude` CLI (Claude Code); "off" asks nobody. Unset
+// means claude when ANTHROPIC_API_KEY is set, else codex. If the chosen one fails, is missing or is
+// slow, the other is tried once, and if that fails too the caller uses fallbackOrder().
+//
+// On Vercel (VERCEL is set) there are no CLIs to run: only the Messages API is used, and with no
+// ANTHROPIC_API_KEY the agent is off. Both CLIs run without a shell, in an empty
 // temporary directory, with a minimal environment, the prompt on stdin and stderr discarded.
 //
 // The same runners, with the same lockdown, serve one other job: the notes on newsworthy tokens
@@ -28,7 +31,7 @@ import { RELATED, storyMatcher, tidy } from "./feed-parse";
 import type { FeedAgentName, FeedItem } from "./feed-types";
 
 /** Small fast models are plenty for choosing from a list of headlines. */
-export const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5"; // FEED_CLAUDE_MODEL overrides it
+export const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001"; // FEED_CLAUDE_MODEL overrides it
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna"; // FEED_CODEX_MODEL overrides it
 /**
  * A call normally takes 10 to 25 seconds. The limit is generous because the call runs in the
@@ -100,8 +103,12 @@ export function agentPlan(): { order: { agent: FeedAgentName; model: string }[];
   };
   const choice = (process.env.FEED_AGENT ?? "").trim().toLowerCase();
   if (choice === "off") return { order: [], timeoutMs };
-  // Unset means Codex. A CLI that is not installed fails at once, so the other is simply next.
-  return { order: choice === "claude" ? [claude, codex] : [codex, claude], timeoutMs };
+  // A serverless function has no CLIs and no logged-in user: the API or nothing.
+  if (process.env.VERCEL) return { order: claude.agent === "claude-api" ? [claude] : [], timeoutMs };
+  // Unset means the API when there is a key for it, else Codex. A CLI that is not installed fails
+  // at once, so the other is simply next.
+  const claudeFirst = choice === "claude" || (choice !== "codex" && claude.agent === "claude-api");
+  return { order: claudeFirst ? [claude, codex] : [codex, claude], timeoutMs };
 }
 
 export function age(publishedAt: string, now: number): string {

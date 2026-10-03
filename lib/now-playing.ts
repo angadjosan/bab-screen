@@ -1,14 +1,20 @@
 import { execFile } from "node:child_process";
 import { getSongCredit } from "./song-credit";
+import { SpotifyError, currentlyPlaying, type CurrentlyPlaying } from "./spotify";
 
-// Reads what the Spotify desktop app on this Mac is playing, through its AppleScript dictionary.
-// Read-only: it never launches Spotify and never touches playback. No Spotify account or API key is involved.
+// What the Spotify account is playing, from the Web API (GET /me/player/currently-playing) with the
+// login the song requests use (lib/spotify.ts, /api/spotify/login). That works wherever the server
+// runs, Vercel included.
+//
+// Until Spotify is connected, a server on a Mac falls back to asking the Spotify desktop app on
+// that Mac through its AppleScript dictionary (osascript, JXA), which needs no account at all.
+// Read-only either way: nothing here launches Spotify or touches playback.
 
 export type NowPlayingStatus = "playing" | "paused" | "stopped" | "not_running" | "unavailable";
 
 export type NowPlaying = {
   status: NowPlayingStatus;
-  reason?: "automation_permission" | "timeout" | "error";
+  reason?: "automation_permission" | "not_connected" | "login_expired" | "rate_limited" | "timeout" | "error";
   title: string | null;
   artists: string | null;
   album: string | null;
@@ -22,8 +28,9 @@ export type NowPlaying = {
   fetchedAt: number;
 };
 
-const CACHE_MS = 1_500;
-// After a failure (most likely the macOS permission prompt waiting for an answer) ask less often.
+// The Web API is shared by every screen and by the song requests; once every 3 s per server instance is plenty.
+const CACHE_MS = 3_000;
+// After a failure (not logged in, rate limited, the macOS permission prompt waiting for an answer) ask less often.
 const FAILURE_CACHE_MS = 10_000;
 const OSASCRIPT_TIMEOUT_MS = 4_000;
 const SPOTIFY_BUNDLE_ID = "com.spotify.client";
@@ -82,7 +89,47 @@ function blank(status: NowPlayingStatus, reason?: NowPlaying["reason"]): NowPlay
   return { status, ...(reason ? { reason } : {}), title: null, artists: null, album: null, artworkUrl: null, durationMs: null, positionMs: null, trackId: null, queuedBy: null, queuedAt: null, fetchedAt: Date.now() };
 }
 
+async function readWebApi(): Promise<NowPlaying> {
+  let playing: CurrentlyPlaying | null;
+  try {
+    playing = await currentlyPlaying();
+  } catch (error) {
+    const code = error instanceof SpotifyError ? error.code : "error";
+    if (code === "not_connected" || code === "not_configured" || code === "insufficient_scope") return blank("unavailable", "not_connected");
+    if (code === "login_expired") return blank("unavailable", "login_expired");
+    if (code === "rate_limited") return blank("unavailable", "rate_limited");
+    return blank("unavailable", code === "timeout" ? "timeout" : "error");
+  }
+  const track = playing?.item;
+  const title = text(track?.name);
+  // 204 (no active device) or an ad: nothing to show.
+  if (!playing || !track || !title) return blank("stopped");
+  const durationMs = count(track.durationMs);
+  const positionMs = count(playing.progressMs);
+  const artwork = text(track.artworkUrl);
+  return {
+    status: playing.isPlaying ? "playing" : "paused",
+    title,
+    artists: text(track.artists),
+    album: text(track.album),
+    artworkUrl: artwork && /^https:\/\//i.test(artwork) ? artwork : null,
+    durationMs: durationMs && durationMs > 0 ? Math.round(durationMs) : null,
+    positionMs: positionMs !== null && durationMs ? Math.min(positionMs, durationMs) : positionMs,
+    trackId: text(track.uri) ?? text(track.id),
+    queuedBy: null,
+    queuedAt: null,
+    fetchedAt: Date.now(),
+  };
+}
+
 async function read(): Promise<NowPlaying> {
+  const viaApi = await readWebApi();
+  // On a Mac without a Spotify login, ask the desktop app instead, as this always did.
+  if (viaApi.reason === "not_connected" && process.platform === "darwin" && !process.env.VERCEL) return readDesktopApp();
+  return viaApi;
+}
+
+async function readDesktopApp(): Promise<NowPlaying> {
   // Cheap first check that cannot launch anything; pgrep exits 1 when there is no such process.
   const probe = await run("/usr/bin/pgrep", ["-x", "Spotify"], 2_000);
   if (probe.code === 1) return blank("not_running");
@@ -130,7 +177,7 @@ async function read(): Promise<NowPlaying> {
 let cached: NowPlaying | null = null;
 let pending: Promise<NowPlaying> | null = null;
 
-// One osascript at a time, and at most one every CACHE_MS however many clients poll.
+// One read at a time, and at most one every CACHE_MS however many clients poll.
 export async function getNowPlaying(): Promise<NowPlaying> {
   const maxAge = cached?.status === "unavailable" ? FAILURE_CACHE_MS : CACHE_MS;
   if (!cached || Date.now() - cached.fetchedAt >= maxAge) {

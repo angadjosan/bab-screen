@@ -3,10 +3,11 @@ import { ensureSongsLoop, syncSongs } from "../../../../lib/songs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 // Checks Slack for new song requests, acts on them, and reports what happened.
-// The first call after a server start also starts the background poll, so one request is enough
-// to keep it running. `?force=1` skips the few-second throttle between runs.
+// On a long-running server the first call also starts the background poll (the screen's
+// /api/now-playing requests start it too). `?force=1` runs a round even if one is not due yet.
 export async function GET(request: NextRequest) {
   ensureSongsLoop();
   const status = await syncSongs({ force: request.nextUrl.searchParams.get("force") === "1" });

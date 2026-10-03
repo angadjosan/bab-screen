@@ -7,7 +7,7 @@
 // /api/spotify/login. Queueing requires Spotify Premium and an active device; playlists do not.
 
 import { randomBytes } from "node:crypto";
-import { readJson, writeJson } from "./songs-store";
+import { readJson, writeJson } from "./store";
 
 const AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -16,7 +16,11 @@ const TOKEN_FILE = "spotify.json";
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RATE_LIMIT_PAUSE_MS = 15 * 60_000;
 
-/** Everything any mode needs, requested up front so switching modes never needs a second login. */
+/**
+ * Everything any mode needs, requested up front so switching modes never needs a second login.
+ * The now-playing tile reads user-read-currently-playing, and the coin flip turns the volume down
+ * with user-modify-playback-state.
+ */
 export const SPOTIFY_SCOPES = [
   "user-modify-playback-state",
   "user-read-playback-state",
@@ -31,6 +35,7 @@ export const QUEUE_SCOPES = ["user-modify-playback-state"];
 
 /** Spotify refuses `localhost` redirect URIs; plain http is only allowed for the loopback IP form. */
 export const DEFAULT_REDIRECT_URI = "http://127.0.0.1:3000/api/spotify/callback";
+const CALLBACK_PATH = "/api/spotify/callback";
 
 export type SpotifyErrorCode =
   | "not_configured"
@@ -91,15 +96,37 @@ type Shared = { pausedUntil: number; refreshing?: Promise<string> };
 const globalStore = globalThis as typeof globalThis & { __babSpotify?: Shared };
 const shared: Shared = (globalStore.__babSpotify ??= { pausedUntil: 0 });
 
-export function spotifyConfig(): { clientId: string; clientSecret: string; redirectUri: string } | null {
+export function spotifyConfig(): { clientId: string; clientSecret: string } | null {
   const clientId = process.env.SPOTIFY_CLIENT_ID?.trim();
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret, redirectUri: process.env.SPOTIFY_REDIRECT_URI?.trim() || DEFAULT_REDIRECT_URI };
+  return { clientId, clientSecret };
 }
 
-export function redirectUri(): string {
-  return process.env.SPOTIFY_REDIRECT_URI?.trim() || DEFAULT_REDIRECT_URI;
+/**
+ * The OAuth redirect URI, which must be listed exactly in the Spotify app's settings:
+ *   1. SPOTIFY_REDIRECT_URI, when set;
+ *   2. on Vercel, the project's production domain (VERCEL_PROJECT_PRODUCTION_URL), so a login
+ *      started on a preview deployment still comes back to the one registered address;
+ *   3. otherwise the address the login was opened at (`origin`), with localhost swapped for
+ *      127.0.0.1 because Spotify refuses "localhost";
+ *   4. http://127.0.0.1:3000/api/spotify/callback.
+ */
+export function redirectUri(origin?: string | null): string {
+  const configured = process.env.SPOTIFY_REDIRECT_URI?.trim();
+  if (configured) return configured;
+  const production = process.env.VERCEL ? process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() : undefined;
+  if (production) return `https://${production.replace(/^https?:\/\//, "").replace(/\/+$/, "")}${CALLBACK_PATH}`;
+  if (origin) {
+    try {
+      const url = new URL(CALLBACK_PATH, origin);
+      if (url.hostname === "localhost") url.hostname = "127.0.0.1";
+      return url.toString();
+    } catch {
+      // fall through to the default
+    }
+  }
+  return DEFAULT_REDIRECT_URI;
 }
 
 export type SpotifyConnection = {
@@ -133,13 +160,13 @@ export function newOAuthState(): string {
   return randomBytes(24).toString("base64url");
 }
 
-export function authorizeUrl(state: string): string {
+export function authorizeUrl(state: string, redirect: string): string {
   const config = spotifyConfig();
   if (!config) throw new SpotifyError("not_configured");
   const url = new URL(AUTHORIZE_URL);
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", config.redirectUri);
+  url.searchParams.set("redirect_uri", redirect);
   url.searchParams.set("scope", SPOTIFY_SCOPES.join(" "));
   url.searchParams.set("state", state);
   return url.toString();
@@ -180,14 +207,14 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenResponse
   return payload;
 }
 
-/** Trades the callback `code` for tokens and stores them (file mode 600). */
-export async function exchangeCode(code: string): Promise<void> {
+/** Trades the callback `code` for tokens and stores them (lib/store.ts; file mode 600). `redirect` must be the one the login sent. */
+export async function exchangeCode(code: string, redirect: string): Promise<void> {
   const config = spotifyConfig();
   if (!config) throw new SpotifyError("not_configured");
   const payload = await tokenRequest({
     grant_type: "authorization_code",
     code,
-    redirect_uri: config.redirectUri,
+    redirect_uri: redirect,
   });
   if (!payload.refresh_token) throw new SpotifyError("oauth_no_refresh_token");
   const tokens: StoredTokens = {
@@ -244,7 +271,7 @@ async function accessToken(forceRefresh = false): Promise<string> {
 type ApiError = { error?: { status?: number; message?: string; reason?: string } };
 
 async function api<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   params: Record<string, string> = {},
   body?: unknown,
@@ -350,6 +377,75 @@ export async function listDevices(): Promise<SpotifyDevice[]> {
     type: device.type ?? "Unknown",
     isActive: Boolean(device.is_active),
   }));
+}
+
+/** What the account is playing right now, as the Web API reports it; null when nothing is. */
+export type CurrentlyPlaying = {
+  isPlaying: boolean;
+  progressMs: number | null;
+  item: {
+    id: string | null;
+    uri: string | null;
+    type: string | null;
+    name: string | null;
+    artists: string | null;
+    album: string | null;
+    artworkUrl: string | null;
+    durationMs: number | null;
+  } | null;
+};
+
+/** GET /me/player/currently-playing (scope user-read-currently-playing). Throws SpotifyError. */
+export async function currentlyPlaying(): Promise<CurrentlyPlaying | null> {
+  type Image = { url?: string; width?: number | null };
+  const payload = await api<{
+    is_playing?: boolean;
+    progress_ms?: number | null;
+    item?: {
+      id?: string | null;
+      uri?: string | null;
+      type?: string;
+      name?: string;
+      duration_ms?: number;
+      artists?: Array<{ name?: string }>;
+      album?: { name?: string; images?: Image[] };
+      show?: { name?: string; images?: Image[] };
+      images?: Image[];
+    } | null;
+  }>("GET", "/me/player/currently-playing", { additional_types: "track,episode" });
+  if (!payload) return null;
+  const item = payload.item;
+  // Spotify lists images largest first; the tile is small, so take the smallest that is at least 300 px.
+  const images = item?.album?.images ?? item?.images ?? item?.show?.images ?? [];
+  const image = [...images].reverse().find((entry) => (entry.width ?? 0) >= 300) ?? images[0];
+  return {
+    isPlaying: Boolean(payload.is_playing),
+    progressMs: typeof payload.progress_ms === "number" ? payload.progress_ms : null,
+    item: item
+      ? {
+          id: item.id ?? null,
+          uri: item.uri ?? null,
+          type: item.type ?? null,
+          name: item.name ?? null,
+          artists: (item.artists ?? []).map((artist) => artist.name ?? "").filter(Boolean).join(", ") || item.show?.name || null,
+          album: item.album?.name ?? item.show?.name ?? null,
+          artworkUrl: image?.url ?? null,
+          durationMs: typeof item.duration_ms === "number" ? item.duration_ms : null,
+        }
+      : null,
+  };
+}
+
+/** Volume (0 to 100) of the active device, or null when nothing is active or it has no volume control. */
+export async function playerVolume(): Promise<number | null> {
+  const payload = await api<{ device?: { volume_percent?: number | null; supports_volume?: boolean } }>("GET", "/me/player");
+  const volume = payload?.device?.volume_percent;
+  return payload?.device?.supports_volume === false || typeof volume !== "number" ? null : volume;
+}
+
+/** Sets the active device's volume (scope user-modify-playback-state). Throws SpotifyError. */
+export async function setPlayerVolume(percent: number): Promise<void> {
+  await api<unknown>("PUT", "/me/player/volume", { volume_percent: String(Math.max(0, Math.min(100, Math.round(percent)))) });
 }
 
 // --- Playlists -------------------------------------------------------------------------------

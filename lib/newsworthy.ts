@@ -25,7 +25,7 @@
 //
 // It runs in the background inside the feed's refresh (lib/feed.ts), at most once every
 // REFRESH_MINUTES and only when the candidates have changed, and never inside a request. The
-// result is kept in memory and in .data/newsworthy.json. With the agent off there is no list;
+// result is kept in memory and in newsworthy.json in the store (lib/store.ts). With the agent off there is no list;
 // if a run fails the last list stays up until it is TTL_MINUTES old.
 
 import { createHash } from "node:crypto";
@@ -35,7 +35,7 @@ import { clip, cluster, rejectReason, tidy } from "./feed-parse";
 import { HACKER_NEWS } from "./feed-sources";
 import type { FeedAgentName, FeedItem, NewsworthyResponse, NewsworthyToken } from "./feed-types";
 import { SET_ASSETS } from "./markets";
-import { readJson, writeJson } from "./songs-store";
+import { readJson, reloadAfterMs, writeJson } from "./store";
 import { getUniverse, type UniverseToken } from "./token-universe";
 
 /** A run is made at most this often (NEWSWORTHY_REFRESH_MINUTES overrides it; 0 turns the feature off). */
@@ -80,13 +80,13 @@ type Stored = {
   agent: AgentReport | null;
   rejected: Rejection[];
 };
-type Runtime = { state: Stored; loaded: Promise<void> | null; running: Promise<void> | null };
+type Runtime = { state: Stored; loading: Promise<void> | null; loadedAt: number; running: Promise<void> | null };
 
 const emptyState = (): Stored => ({ version: STATE_VERSION, tokens: [], updatedAt: null, checkedAt: null, signature: "", agent: null, rejected: [] });
 
 // On globalThis so every copy of this module (route bundles, dev-mode reloads) shares one state.
 const globalStore = globalThis as typeof globalThis & { __babNewsworthy?: Runtime };
-const runtime: Runtime = (globalStore.__babNewsworthy ??= { state: emptyState(), loaded: null, running: null });
+const runtime: Runtime = (globalStore.__babNewsworthy ??= { state: emptyState(), loading: null, loadedAt: 0, running: null });
 
 function refreshMs(): number {
   const minutes = Number(process.env.NEWSWORTHY_REFRESH_MINUTES);
@@ -311,9 +311,13 @@ const isStoredToken = (value: unknown): value is NewsworthyToken => {
   );
 };
 
-function load(): Promise<void> {
-  return (runtime.loaded ??= (async () => {
+/** Reads the list from the store once, and again when another instance may have renewed it. */
+function load(force = false): Promise<void> {
+  if (runtime.loading) return runtime.loading;
+  if (!force && (runtime.running || (runtime.loadedAt > 0 && Date.now() - runtime.loadedAt < reloadAfterMs()))) return Promise.resolve();
+  return (runtime.loading = (async () => {
     const stored = await readJson<Partial<Stored>>(STATE_FILE);
+    runtime.loadedAt = Date.now();
     if (!stored || stored.version !== STATE_VERSION) return;
     const state = emptyState();
     const date = (value: unknown) => (typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null);
@@ -324,19 +328,21 @@ function load(): Promise<void> {
     if (stored.agent && typeof stored.agent === "object") state.agent = stored.agent;
     if (Array.isArray(stored.rejected)) state.rejected = stored.rejected;
     runtime.state = state;
-  })());
+  })().finally(() => {
+    runtime.loading = null;
+  }));
 }
 
 async function save(): Promise<void> {
   try {
     await writeJson(STATE_FILE, runtime.state);
   } catch (error) {
-    console.warn("[newsworthy] could not save .data/newsworthy.json:", error instanceof Error ? error.message : error);
+    console.warn("[newsworthy] could not save newsworthy.json:", error instanceof Error ? error.message : error);
   }
 }
 
 async function run(results: SourceResult[], now: number, force: boolean): Promise<void> {
-  await load();
+  await load(true);
   const state = runtime.state;
   const every = refreshMs();
   if (!agentPlan().order.length || every === 0) {
