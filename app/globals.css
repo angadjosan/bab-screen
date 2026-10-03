@@ -236,6 +236,23 @@ p {
   text-overflow: ellipsis;
 }
 
+/* The item's kind, from the labelling model (lib/feed-labels.ts). A filled chip, so it reads as a tag and not as
+   another source name; breaking news takes the screen's warning red, everything else stays neutral. */
+.feed-pill {
+  flex: none;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--bab-surface-2);
+  color: var(--muted);
+  font: 500 16px/26px var(--sans);
+  white-space: nowrap;
+}
+
+.feed-pill.is-breaking {
+  background: color-mix(in oklab, var(--down) 18%, transparent);
+  color: var(--down);
+}
+
 .feed-time {
   flex: none;
   margin-left: auto;

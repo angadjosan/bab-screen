@@ -10,6 +10,7 @@
 // The same refresh also feeds lib/newsworthy.ts (tokens in the news, served by /api/newsworthy).
 
 import { AgentError, agentPlan, fallbackOrder, pickWithAgent, type AgentAttempt } from "./feed-agent";
+import { labelItems } from "./feed-labels";
 import { gatherSources, type SourceCache, type SourceResult } from "./feed-fetch";
 import { cluster } from "./feed-parse";
 import {
@@ -228,6 +229,7 @@ async function refresh(): Promise<void> {
     state.agent = { at: new Date().toISOString(), agent: null, model: null, ms: null, ok: false, error: code, attempts: error instanceof AgentError ? error.attempts : [] };
     if (agentPlan().order.length) console.warn(`[feed] AI curation failed (${code}); using the fallback ordering`);
   }
+  state.items = await labelItems(state.items);
   await save();
   // The newsworthy tokens are chosen from the same fetch, after the feed is up. It keeps its own
   // schedule (not every refresh) and its own state, and never rejects.

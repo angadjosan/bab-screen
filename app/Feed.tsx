@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import type { FeedItem, FeedResponse } from "@/lib/feed-types";
+import { FEED_LABELS, type FeedItem, type FeedLabel, type FeedResponse } from "@/lib/feed-types";
 import { useFeaturedStory, type Story } from "./Markets";
 import styles from "./Story.module.css";
 
@@ -51,6 +51,7 @@ function clean(raw: unknown): FeedItem[] {
       // Thumbnails are not shown: in a column this narrow they add load and noise without helping anyone read.
       imageUrl: null,
       alert: item.alert === true,
+      label: (FEED_LABELS as readonly unknown[]).includes(item.label) ? (item.label as FeedLabel) : undefined,
     });
     if (items.length === MAX_ITEMS) break;
   }
@@ -149,21 +150,38 @@ function useReducedMotion() {
   return reduced;
 }
 
-function Entry({ item, now, hidden }: { item: FeedItem; now: number; hidden: boolean }) {
+const LABEL_TEXT: Record<FeedLabel, string> = {
+  breaking: "Breaking",
+  release: "Release",
+  announcement: "Announcement",
+  research: "Research",
+  event: "Event",
+};
+
+/** Who published it, the item's label when the labelling model is sure of one, and how long ago. */
+function EntryMeta({ item, now }: { item: FeedItem; now: number }) {
   const tweet = item.kind === "tweet";
   const when = age(item.publishedAt, now);
   const handle = item.handle ? `@${item.handle.replace(/^@+/, "")}` : null;
-  const summary = !tweet && item.summary ? lede(item.summary, item.title) : null;
   const who = tweet ? item.author ?? handle ?? item.source : item.source || item.author;
+  return (
+    <span className="feed-meta">
+      {who && <span className="feed-source" dir="auto">{who}</span>}
+      {tweet && item.author && handle && <span className="feed-handle">{handle}</span>}
+      {item.label && <span className={`feed-pill is-${item.label}`}>{LABEL_TEXT[item.label]}</span>}
+      {when && <time className="feed-time" dateTime={new Date(Date.parse(item.publishedAt)).toISOString()}>{when}</time>}
+    </span>
+  );
+}
+
+function Entry({ item, now, hidden }: { item: FeedItem; now: number; hidden: boolean }) {
+  const tweet = item.kind === "tweet";
+  const summary = !tweet && item.summary ? lede(item.summary, item.title) : null;
   return (
     <li className={tweet ? "feed-item is-tweet" : "feed-item"} style={hidden ? { visibility: "hidden" } : undefined}>
       {/* Nobody clicks on a TV, and focus would pull a moving item into view; it stays a link for assistive tech. */}
       <a className="feed-link" href={linkTarget(item.url)} target="_blank" rel="noopener noreferrer nofollow" tabIndex={-1}>
-        <span className="feed-meta">
-          {who && <span className="feed-source" dir="auto">{who}</span>}
-          {tweet && item.author && handle && <span className="feed-handle">{handle}</span>}
-          {when && <time className="feed-time" dateTime={new Date(Date.parse(item.publishedAt)).toISOString()}>{when}</time>}
-        </span>
+        <EntryMeta item={item} now={now} />
         <span className="feed-title" dir="auto">{shorten(item.title)}</span>
         {summary && <span className="feed-summary" dir="auto">{summary}</span>}
       </a>
