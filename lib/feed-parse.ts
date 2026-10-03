@@ -312,6 +312,16 @@ const FILLER_TITLE: RegExp[] = [
   /\b(here'?s why|you won'?t believe|this one (trick|coin))\b/i,
   /\bwhy is (the )?(crypto|bitcoin|btc|eth|ether|xrp|sol|doge|market).{0,30}(up|down|crashing|pumping|dumping) today\b/i,
 ];
+// A publisher selling its own events: ticket deals, exhibitor and side-event deadlines, session previews. Checked on
+// 2026-10-02 against TechCrunch's feed (five promos dropped, none of its news) and against headlines where "passes",
+// "deal" or "tickets" are news ("Stablecoin bill passes Senate", "Ticketmaster breach").
+const PROMO_TITLE = [
+  /\b(expo\+?|vip|all[- ]access|early[- ]bird|general admission|attendee|founder|investor|student|conference|event)\s+(pass(es)?|tickets?)\b/i,
+  /\b(\$\d+|save|savings|discount|deal)\b.{0,12}\b(on|for)\s+(your |a |an )?.{0,40}\b(pass(es)?|tickets?)\b/i,
+  /\b(last|final|less than|only) \d+ (hours?|days?)\b.{0,40}\b(apply|exhibit|register|book|save|buy|get|grab)\b/i,
+  /\b(exhibit|sponsor|host a side event|apply to (speak|exhibit|host))\b.{0,40}\b(disrupt|summit|conference|expo|sessions)\b/i,
+  /^\s*techcrunch (disrupt|sessions)\b[^:]{0,12}:/i,
+];
 const FILLER_CATEGORY = /^(sponsored|press releases?|partner content|paid|advertis(ement|ing)|promoted|price (analysis|predictions?)|branded content|deals?)$/i;
 const FILLER_PATH = /\/(press-releases?|sponsored|partner-content|advertorial|price-prediction|price-analysis|promoted|deals?)(\/|$)/i;
 
@@ -329,6 +339,7 @@ export function rejectReason(item: { title: string; summary?: string | null; url
   if (UNSUITABLE.test(text)) return "unsuitable_language";
   if (item.kind === "news") {
     if (FILLER_TITLE.some((pattern) => pattern.test(item.title))) return "filler";
+    if (PROMO_TITLE.some((pattern) => pattern.test(item.title))) return "promotion";
     if (itemCategories.some((category) => FILLER_CATEGORY.test(category.trim()))) return "sponsored";
     try {
       if (FILLER_PATH.test(new URL(item.url).pathname)) return "sponsored";
