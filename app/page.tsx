@@ -264,7 +264,7 @@ export default function Dashboard() {
   const spots = useSpotAlerts();
   // The calendar block is given room only while it has events to list (not while the calendar is unconnected or empty).
   const [hasEvents, setHasEvents] = useState(false);
-  // Focus mode: only the ticker tape, the featured market and the calendar.
+  // Focus mode: only the ticker tape, the featured market and the week's events.
   const [focus, setFocus] = useState(false);
 
   useEffect(() => {
@@ -309,15 +309,15 @@ export default function Dashboard() {
           </div>
         )}
         <div className="featured-slot"><FeaturedMarket /></div>
-        <div className="side-slot">
-          {!focus && <NowPlaying />}
-          {!focus && <PhotoCarousel />}
-          <div className={`events-slot ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents}>
-            <div className="events-box">
-              <Events quietWhenEmpty layout={focus ? "full" : "compact"} onState={({ count }) => setHasEvents(count > 0)} />
-            </div>
+        {!focus && (
+          <div className="side-slot">
+            <NowPlaying />
+            <PhotoCarousel />
           </div>
-        </div>
+        )}
+        <section className={`events-band ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents} aria-label="This week's events">
+          <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
+        </section>
         {!focus && <SpotTakeover spot={spots.takeover} now={spots.now} />}
       </main>
     </MarketsProvider>

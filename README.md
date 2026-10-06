@@ -2,25 +2,22 @@
 
 A fixed 1920x1080 screen for a TV: the Blockchain at Berkeley mark (`public/bab-logo.svg`, also the favicon as `app/icon.svg`) beside a scrolling ticker tape across the top, and three columns below it. Left (432px): a feed of news and posts from `/api/feed` that drifts slowly upward in a loop (`app/Feed.tsx`; the speed is `FEED_SCROLL_PX_PER_S`), replaced by a short AI-written note while a token that is in the news is featured (see Newsworthy tokens). Middle (816px): one featured market, its price above a TradingView chart of the last 24 hours in 30-minute candles. Right (496px wide, 901px tall): the song playing in Spotify (120px), a carousel that rotates quotes and chumming photos from Slack, and under it the club calendar's week (see "Upcoming events"). A new Spotbot photo takes over the whole screen for a few seconds, and the spots of the last hour are listed under the feed (see "Spot alerts"). The column widths are `grid-template-columns` on `.dashboard` in `app/globals.css`; the chart's 24-hour window depends on the middle column's width, so if that changes, re-tune `zoom` on `.chartFrame` in `app/Markets.module.css` together with `CHART_INTERVAL` in `lib/markets.ts`. Run `npm run dev` and open http://127.0.0.1:3000 in Chrome.
 
-## The right column
+## The right column and the events band
 
-Top to bottom, in `.side-slot` (`app/globals.css`) and `app/page.tsx`: the now-playing tile, a 24px gap, the carousel, and the calendar block when it has something to list.
+The right column is the now-playing tile, a 24px gap, and the carousel in the height that is left (`.side-slot` in `app/globals.css`, `app/page.tsx`). Under the chart and the carousel, across both, is the week's events band (`.events-band`, see "Upcoming events"), 290px tall while the calendar has an event that has not ended. While the calendar is not connected, still loading or empty, the band takes no space and the chart and the carousel have the whole height. The change eases over about half a second (`--bab-slow`); with reduced motion it is immediate.
 
-- **Carousel** (`PhotoCarousel` in `app/page.tsx`): a picture frame with a caption under it. Quotes and chumming photos share it; Spotbot photos are not in it (see "Spot alerts"). Quotes are the backbone, drawn at random from the deck in `app/Quotes.tsx`. A chumming photo (see "Chumming photos") is slipped in after every two or three quotes, two or three chosen at random each time (`chumGap`). The chumming photos come in shuffled order, all six before any comes back, and the same one never twice running; two never follow each other unless there are no quotes, in which case they cycle on their own. Each slide stays 8 seconds (`SLIDE_MS`) and crossfades to the next; there are no progress bars. The next slide is chosen a turn ahead and loaded hidden, and it does not go up until its picture has loaded; one still loading 6 seconds after its time (`SLIDE_LOAD_GRACE_MS`) is passed over. A new chumming photo does not jump the queue: it is the first one drawn at the next chumming turn. A chumming photo that fails to load drops out and is retried every 5 minutes; a quote whose picture fails is shown as its words, or skipped if it has none.
+- **Carousel** (`PhotoCarousel` in `app/page.tsx`): a picture frame with a caption under it. Quotes and chumming photos share it; Spotbot photos are not in it (see "Spot alerts"). Quotes are the backbone, drawn at random from the deck in `app/Quotes.tsx`. A chumming photo (see "Chumming photos") is slipped in after every two or three quotes, two or three chosen at random each time (`chumGap`).
 - **Caption height** is the same for every slide, so the frame never changes size between slides: all captions share one grid cell (as tall as the tallest of them), and while quotes are in the rotation the cell is at least 137px, the tallest a quote's caption can be. A chumming caption is never taller than 127px.
-- **Calendar** (`.events-slot`): 200px (the next event in words, and the week's tracks under it) plus the 24px gap, shown only while the calendar has an event that has not ended. While the calendar is not connected, still loading or empty, the block takes no space and the carousel has the whole height. The change eases over about half a second (`--bab-slow`); with reduced motion it is immediate.
-- **Jam QR**: for its minute the tile is 300px instead of 120px. The calendar steps aside for that minute and comes back after, so the picture stays about the size it was; with no calendar showing, the frame gives up the 180px.
+- **Jam QR**: for its minute the tile is 300px instead of 120px, and the frame gives up the 180px.
 
-Frame heights. The quotes row without a calendar was measured on 2026-10-02 (606px, the same as before spots left the carousel); the others follow from the same layout, with the chumming-only rows assuming the tallest chumming caption, 127px:
+Heights, measured on 2026-10-05 with quotes in the rotation:
 
-| State | Tile | Frame | Caption | Calendar |
-| --- | --- | --- | --- | --- |
-| Chumming photos only | 120 | 616 | 127 | none |
-| Quotes | 120 | 606 | 137 | none |
-| Chumming photos and calendar | 120 | 415 | 127 | 177 |
-| Quotes and calendar | 120 | 405 | 137 | 177 |
-| Jam QR up, no calendar | 300 | 426 | 137 | none |
-| Jam QR up, quotes (calendar hidden for the minute) | 300 | 426 | 137 | hidden |
+| State | Tile | Frame | Caption | Chart slot | Events band |
+| --- | --- | --- | --- | --- | --- |
+| No events this week | 120 | 595 | 137 | 890 | none |
+| Events this week | 120 | 263 | 137 | 558 | 290 |
+
+All ledger rules, and the frame, sit in the middle of 42px of space (`--rule-gap`), so every block has 21px on each side of the rule next to it.
 
 ## Market data
 
@@ -105,7 +102,7 @@ Mention the Slack bot in the songs channel with one of these words:
 
 | Command | What it does |
 | --- | --- |
-| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and the calendar (the chart takes the whole stage when there are no events). Spotify on this Mac is paused if it was playing. |
+| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and, across the whole width under it, the week's events (the chart takes the whole stage when there are none). Spotify on this Mac is paused if it was playing. |
 | `@spotbot-reader unfocus` (or `focus off`) | Back to the full screen. The music starts again if focus mode paused it. |
 | `@spotbot-reader pause` (or `stop`) | Pauses Spotify. |
 | `@spotbot-reader play` (or `resume`) | Starts Spotify again. |
@@ -193,7 +190,7 @@ What these checks cannot do: they cannot tell whether a sentence is true. A mode
 
 ## Upcoming events
 
-`app/Events.tsx` draws the club's Google Calendar under the carousel in the right column. The week ahead is seven tracks, today first, each running down through the hours that week's events fall in (`trackWindow` in `app/event-week.ts`), so an evening meeting sits low and a lunch talk high. Each timed event is a block at its time, the next one is lit white, one under way is gold, and the part of today that has passed is hatched. All-day and multi-day events are bars across the top of the days they cover. Above the tracks, the next event is given in words: when ("Tomorrow, 7 PM" or "Now, until 9 PM"), where, and its title. In focus mode the calendar has the whole column, and the tracks sit over every event of the week that fits, grouped under its date, which is written once per day. `GET /api/events` answers from memory; the calendar is downloaded in the background at most every 10 minutes while a screen is asking, and the page asks every 5 minutes and keeps its own clock, so an event turns to "Now" or drops off on time without a fetch. If a download fails the last good list stays up, for at most 24 hours.
+`app/Events.tsx` draws the club's Google Calendar along the bottom of the screen as a wall calendar: seven columns from today, each headed by its date, listing that day's events with the time, the place and the title. Today's column is shaded, a day with nothing on it is dimmed, and each event has a rule down its left side, white for the next one and gold for one under way ("Until 9 PM"). All-day and multi-day events are bars across the top of the days they cover. A day with more events than fit shows as many as fit whole and says how many more. In focus mode the band runs the whole width of the screen. `GET /api/events` answers from memory; the calendar is downloaded in the background at most every 10 minutes while a screen is asking, and the page asks every 5 minutes and keeps its own clock, so an event turns to "Now" or drops off on time without a fetch. If a download fails the last good list stays up, for at most 24 hours.
 
 The source is the calendar's iCalendar (.ics) feed, so no API key or Google Cloud project is needed:
 
@@ -202,7 +199,7 @@ The source is the calendar's iCalendar (.ics) feed, so no API key or Google Clou
 
 Until one of the two works there is no calendar block on the screen at all (the carousel keeps the full height) and `/api/events` says why in `message`; the same goes for a connected calendar with nothing coming up. The block appears by itself with the first answer that has an event (the page asks every 5 seconds until the calendar answers, then every 5 minutes) and leaves when the last one ends. Used on its own, without the `quietWhenEmpty` prop the page passes, `<Events />` says "Calendar not connected" or "No upcoming events" instead. Google can take several hours to show a change in either feed.
 
-What is shown: events that have not ended and start within the next 7 days, from the API's list of at most 12 starting within 28 days. In focus mode an event that does not fit whole is left off rather than cut. Recurring events are expanded (`RRULE`, `EXDATE`, moved or cancelled instances), cancelled events are left out, and so is anything longer than 14 days. Times are always shown in `America/Los_Angeles`, whatever the server's or the browser's timezone. Parsing is done with `ical.js`; turning a time in a named zone into an instant uses the machine's own timezone database (`lib/events.ts`). An event whose timezone name is not an IANA name is left out rather than guessed. Only the title and location reach the page, as plain text; descriptions, guests and links never leave the server.
+What is shown: events that have not ended and start within the next 7 days, from the API's list of at most 12 starting within 28 days. Recurring events are expanded (`RRULE`, `EXDATE`, moved or cancelled instances), cancelled events are left out, and so is anything longer than 14 days. Times are always shown in `America/Los_Angeles`, whatever the server's or the browser's timezone. Parsing is done with `ical.js`; turning a time in a named zone into an instant uses the machine's own timezone database (`lib/events.ts`). An event whose timezone name is not an IANA name is left out rather than guessed. Only the title and location reach the page, as plain text; descriptions, guests and links never leave the server.
 
 ## Coin flip
 

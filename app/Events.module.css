@@ -1,7 +1,8 @@
 /*
- * Upcoming events (app/Events.tsx): the week drawn as seven tracks, with the next event in words above it (compact)
- * or every event that fits, grouped by day, below it (full). Colours and faces are the page's own (--ink, --muted,
- * --faint, --line, --sans in globals.css); gold is the brand's live signal, so it marks only what is under way now.
+ * The week's events (app/Events.tsx) as a wall calendar: seven columns from today, each headed by its date, with
+ * bars for events that run across days, then each day's events. Colours and faces are the page's own (--ink,
+ * --muted, --faint, --line, --sans in globals.css); gold is the brand's live signal, so it marks only what is
+ * under way now.
  */
 
 .events {
@@ -21,241 +22,158 @@
   }
 }
 
-.compact {
-  gap: 14px;
-}
-
-.full {
-  gap: 30px;
-}
-
-/* --- The week strip ------------------------------------------------------------------------------------------ */
-
-.week {
+.board {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(var(--days), minmax(0, 1fr));
   grid-template-rows: auto auto minmax(0, 1fr);
-  column-gap: 8px;
-  row-gap: 6px;
 }
 
-.compact .week {
-  flex: 1;
-  min-height: 0;
-}
-
-.full .week {
-  flex: none;
-  height: 236px;
-}
+/* --- Each day's date ------------------------------------------------------------------------------------------ */
 
 .dayHead {
   grid-row: 1;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  color: var(--faint);
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 14px 12px;
   font-variant-numeric: tabular-nums;
-}
-
-.weekday {
-  font: 400 20px/22px var(--sans);
 }
 
 .date {
-  font: 600 26px/28px var(--sans);
+  font: 600 32px/36px var(--sans);
 }
 
-.busy {
-  color: var(--muted);
-}
-
-.busy .date,
-.today .date {
-  color: var(--ink);
-}
-
-/* All-day and multi-day events: bars across the top of the days they cover. */
-.lane {
-  grid-row: 2;
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
-  column-gap: 8px;
-  row-gap: 4px;
-}
-
-.span {
-  height: 8px;
-  background: color-mix(in oklab, var(--ink) 45%, transparent);
-}
-
-/* Down through the hours the week's events fall in (trackWindow in event-week.ts), with a faint rule every two hours. */
-.track {
-  grid-row: 3;
-  position: relative;
-  min-height: 0;
-  background:
-    repeating-linear-gradient(to bottom, transparent 0 calc(var(--rule-every) - 1px), var(--line) calc(var(--rule-every) - 1px) var(--rule-every)),
-    color-mix(in oklab, var(--ink) 6%, transparent);
-}
-
-/* The part of today that has already gone. */
-.past {
-  position: absolute;
-  inset: 0 0 auto;
-  background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--ink) 10%, transparent) 0 2px, transparent 2px 7px);
-}
-
-.block {
-  position: absolute;
-  left: 0;
-  right: 0;
-  min-height: 4px;
-  background: color-mix(in oklab, var(--ink) 45%, transparent);
-  /* A dark seam on top, so two events back to back or overlapping read as two. */
-  box-shadow: inset 0 2px 0 var(--bab-black);
-}
-
-.next {
-  background: var(--ink);
-}
-
-.block.live {
-  background: var(--bab-gold);
-  box-shadow: inset 0 2px 0 var(--bab-black), 0 0 18px color-mix(in oklab, var(--bab-gold) 55%, transparent);
-}
-
-.now {
-  position: absolute;
-  left: -4px;
-  right: -4px;
-  height: 2px;
-  margin-top: -1px;
-  background: var(--bab-gold);
-}
-
-/* --- The next event (compact) -------------------------------------------------------------------------------- */
-
-.nextUp {
-  flex: none;
-  min-width: 0;
-}
-
-.nextWhen {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  color: var(--muted);
-  font: 400 22px/28px var(--sans);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.nextWhen time {
-  flex: none;
-  display: flex;
-  align-items: baseline;
-}
-
-.place {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--faint);
-}
-
-.nextTitle {
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 500 30px/36px var(--sans);
-}
-
-.isLive .nextWhen time,
-.isLive .itemTime {
-  color: var(--bab-gold);
-}
-
-.pip {
-  flex: none;
-  align-self: center;
-  width: 10px;
-  height: 10px;
-  margin-right: 10px;
-  background: var(--bab-gold);
-}
-
-/* --- Every event, by day (full) ------------------------------------------------------------------------------ */
-
-/* Positioned, so each row's offsetTop is measured from here (useFitCount in Events.tsx). */
-.agenda {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  list-style: none;
-}
-
-.dayGroup {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  column-gap: 20px;
-  padding: 22px 0;
-}
-
-.dayGroup:first-child {
-  padding-top: 0;
-}
-
-.dayGroup + .dayGroup {
-  border-top: var(--bab-hair) solid var(--line);
-}
-
-.dayMark {
-  display: flex;
-  flex-direction: column;
-}
-
-.dayNumber {
-  font: 600 48px/48px var(--sans);
-  font-variant-numeric: tabular-nums;
-}
-
-.dayName {
-  margin-top: 4px;
+.weekday {
   color: var(--muted);
   font: 400 22px/26px var(--sans);
 }
 
+/* A day with nothing on it steps back, so the busy days are what the eye lands on. */
+.quiet .date,
+.quiet .weekday {
+  color: var(--faint);
+}
+
+/* Today's column is a shade lighter from its date to the bottom. */
+.dayHead.today,
+.dayBody.today {
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.dayHead.today {
+  padding-top: 8px;
+}
+
+/* --- Events across several days ------------------------------------------------------------------------------ */
+
+.lanes {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  row-gap: 6px;
+  padding-bottom: 10px;
+}
+
+.lane {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  margin: 0 6px;
+  padding: 2px 10px;
+  background: color-mix(in oklab, var(--ink) 16%, transparent);
+  font: 500 22px/28px var(--sans);
+  white-space: nowrap;
+}
+
+.lane.next {
+  background: color-mix(in oklab, var(--ink) 26%, transparent);
+}
+
+.laneTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.laneTime {
+  flex: none;
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Each day's events --------------------------------------------------------------------------------------- */
+
+.dayBody {
+  grid-row: 3;
+  min-height: 0;
+  padding: 4px 14px 0;
+}
+
+.dayBody + .dayBody,
+.dayHead + .dayHead {
+  border-left: var(--bab-hair) solid var(--line);
+}
+
+/* Positioned, so each event's offsetTop is measured from here (useDayFit in Events.tsx). */
 .dayEvents {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.items {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
+/* A rule down the left of every event; the next one's is white and one under way has gold. */
 .item {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  column-gap: 14px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--line-strong);
+}
+
+.item.next {
+  border-left-color: var(--ink);
+}
+
+.item.live {
+  border-left-color: var(--bab-gold);
+}
+
+.itemMeta {
+  display: flex;
   align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font: 400 20px/24px var(--sans);
+  white-space: nowrap;
 }
 
 .itemTime {
-  display: flex;
-  align-items: baseline;
-  color: var(--muted);
-  font: 400 22px/34px var(--sans);
+  flex: none;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+}
+
+.live .itemTime {
+  color: var(--bab-gold);
+}
+
+.itemPlace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
 }
 
 .itemTitle {
@@ -264,15 +182,19 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
-  font: 500 28px/34px var(--sans);
+  margin-top: 2px;
+  font: 500 24px/29px var(--sans);
 }
 
-.itemPlace {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Height must match MORE_LINE_PX in Events.tsx. */
+.more {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
   color: var(--muted);
-  font: 400 22px/28px var(--sans);
+  font: 400 20px/30px var(--sans);
 }
 
 /* --- Nothing to list ----------------------------------------------------------------------------------------- */

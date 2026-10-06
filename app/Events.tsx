@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { CalendarEvent, EventsResponse } from "../lib/events";
-import { buildWeek, DAY_MS, formatsFor, groupByDay, isLive, safeZone, timeLabel, WEEK_DAYS, whenLabel, type Formats, type Week } from "./event-week";
+import { DAY_MS, formatsFor, isLive, safeZone, timeLabel, WEEK_DAYS, weekColumns, weekLanes, type DayColumn, type Formats, type Lane } from "./event-week";
 import styles from "./Events.module.css";
 
 const POLL_MS = 5 * 60_000;
@@ -25,11 +25,6 @@ export type EventsState = {
 };
 
 type Props = {
-  /**
-   * compact: the next event in words over the week drawn as seven tracks (the side column's short slot).
-   * full: the week's tracks over every event, grouped by day, as many as fit (focus mode's whole column).
-   */
-  layout?: "compact" | "full";
   /** A fixed list instead of polling /api/events (previews, tests). */
   events?: CalendarEvent[];
   /** Called when the status or the number of events changes, so a parent can hide the block while it is empty. */
@@ -114,119 +109,104 @@ function pickNext(list: readonly CalendarEvent[], now: number): CalendarEvent | 
   return list.find((event) => isLive(event, now)) ?? list.find((event) => !event.allDay) ?? list[0] ?? null;
 }
 
+/** The height kept free at the foot of a day for its "+2 more" line. Must match .more in Events.module.css. */
+const MORE_LINE_PX = 30;
+
 /**
- * The week as seven tracks, today first. Each track runs down through the hours the week's events fall in, so a
- * late meeting sits low and an early one high; the next event is lit, one under way is gold, and the part of
- * today that has passed is shaded. All-day and multi-day events are bars across the top of the days they cover.
+ * How many of each day's events fit whole in its column, by day. Every event stays in the markup (the ones that
+ * do not fit are hidden), so measuring never changes what is measured.
  */
-function WeekStrip({ week, formats, today }: { week: Week; formats: Formats; today: number }) {
-  return (
-    <div className={styles.week} style={{ "--rule-every": `${week.ruleEvery * 100}%` } as CSSProperties} aria-hidden="true">
-      {week.days.map(({ day, busy }, column) => (
-        <div key={day} className={cx(styles.dayHead, busy && styles.busy, day === today && styles.today)} style={{ gridColumn: column + 1 }}>
-          <span className={styles.weekday}>{formats.shortWeekday(day)}</span>
-          <span className={styles.date}>{formats.dayOfMonth(day)}</span>
-        </div>
-      ))}
-      {week.spans.length > 0 && (
-        <div className={styles.lane}>
-          {week.spans.map((span) => (
-            <span key={span.id} className={cx(styles.span, span.next && styles.next)} style={{ gridColumn: `${span.from + 1} / ${span.to + 2}` }} />
-          ))}
-        </div>
-      )}
-      {week.days.map(({ day, blocks }, column) => (
-        <div key={day} className={styles.track} style={{ gridColumn: column + 1 }}>
-          {column === 0 && <span className={styles.past} style={{ height: `${week.nowAt * 100}%` }} />}
-          {blocks.map((block) => (
-            <span
-              key={block.id}
-              className={cx(styles.block, block.next && styles.next, block.live && styles.live)}
-              style={{ top: `${block.top * 100}%`, height: `${block.height * 100}%` }}
-            />
-          ))}
-          {column === 0 && <span className={styles.now} style={{ top: `${week.nowAt * 100}%` }} />}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** The next event in words: when, where and what. */
-function NextUp({ event, now, formats }: { event: CalendarEvent; now: number; formats: Formats }) {
-  const live = isLive(event, now);
-  return (
-    <div className={cx(styles.nextUp, live && styles.isLive)}>
-      <p className={styles.nextWhen}>
-        <time dateTime={event.start}>{live && <span className={styles.pip} aria-hidden="true" />}{whenLabel(event, now, formats)}</time>
-        {event.location && <span className={styles.place}>{event.location}</span>}
-      </p>
-      <p className={styles.nextTitle}>{event.title}</p>
-    </div>
-  );
-}
-
-/** How many events, in order, fit whole in the agenda's box. */
-function useFitCount(box: React.RefObject<HTMLElement | null>, total: number) {
-  const [fit, setFit] = useState(total);
+function useDayFit(board: RefObject<HTMLDivElement | null>, layoutKey: string) {
+  const [fit, setFit] = useState<Record<string, number>>({});
   useLayoutEffect(() => {
-    const element = box.current;
+    const element = board.current;
     if (!element) return;
     const measure = () => {
-      const rows = [...element.querySelectorAll<HTMLElement>("[data-event]")];
-      const room = element.clientHeight;
-      const fitting = rows.findIndex((row) => row.offsetTop + row.offsetHeight > room);
-      setFit(fitting < 0 ? rows.length : fitting);
+      const next: Record<string, number> = {};
+      for (const column of element.querySelectorAll<HTMLElement>("[data-day]")) {
+        const rows = [...column.querySelectorAll<HTMLElement>("[data-event]")];
+        const bottom = (row: HTMLElement) => row.offsetTop + row.offsetHeight;
+        const room = column.clientHeight;
+        const all = rows.every((row) => bottom(row) <= room);
+        next[column.dataset.day ?? ""] = all ? rows.length : rows.filter((row) => bottom(row) <= room - MORE_LINE_PX).length;
+      }
+      setFit((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [box, total]);
+  }, [board, layoutKey]);
   return fit;
 }
 
-/**
- * The week's events under their day: the date once, large, beside every event that day. Events that do not fit
- * whole are hidden rather than cut, and so is a day whose events are all hidden.
- */
-function Agenda({ events, now, formats }: { events: readonly CalendarEvent[]; now: number; formats: Formats }) {
-  const box = useRef<HTMLOListElement>(null);
-  const fit = useFitCount(box, events.length);
-  const today = formats.dayNumber(now);
-  let index = 0;
+type BoardProps = { now: number; formats: Formats; nextId: string | null };
+
+function EventItem({ event, now, formats, nextId, hidden }: BoardProps & { event: CalendarEvent; hidden: boolean }) {
+  const live = isLive(event, now);
   return (
-    <ol ref={box} className={styles.agenda}>
-      {groupByDay(events, now, formats).map((group) => {
-        const firstIndex = index;
-        index += group.events.length;
-        return (
-          <li key={group.day} className={styles.dayGroup} style={firstIndex >= fit ? { visibility: "hidden" } : undefined}>
-            <p className={styles.dayMark}>
-              <span className={styles.dayNumber}>{formats.dayOfMonth(group.day)}</span>
-              <span className={styles.dayName}>{group.day === today ? "Today" : formats.shortWeekday(group.day)}</span>
-            </p>
-            <ol className={styles.dayEvents}>
-              {group.events.map((event, i) => {
-                const live = isLive(event, now);
-                return (
-                  <li key={event.id} data-event className={cx(styles.item, live && styles.isLive)} style={firstIndex + i >= fit ? { visibility: "hidden" } : undefined}>
-                    <time className={styles.itemTime} dateTime={event.start}>
-                      {live && <span className={styles.pip} aria-hidden="true" />}
-                      {timeLabel(event, now, formats)}
-                    </time>
-                    <div className={styles.itemBody}>
-                      <p className={styles.itemTitle}>{event.title}</p>
-                      {event.location && <p className={styles.itemPlace}>{event.location}</p>}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          </li>
-        );
-      })}
-    </ol>
+    <li data-event className={cx(styles.item, live && styles.live, event.id === nextId && styles.next)} style={hidden ? { visibility: "hidden" } : undefined}>
+      <p className={styles.itemMeta}>
+        <time className={styles.itemTime} dateTime={event.start}>{timeLabel(event, now, formats)}</time>
+        {event.location && <span className={styles.itemPlace}>{event.location}</span>}
+      </p>
+      <p className={styles.itemTitle}>{event.title}</p>
+    </li>
+  );
+}
+
+function DayEvents({ column, fit, ...board }: BoardProps & { column: DayColumn; fit: number | undefined }) {
+  const shown = fit ?? column.events.length;
+  const more = column.events.length - shown;
+  return (
+    <div data-day={column.day} className={styles.dayEvents}>
+      <ol className={styles.items}>
+        {column.events.map((event, i) => <EventItem key={event.id} event={event} hidden={i >= shown} {...board} />)}
+      </ol>
+      {more > 0 && <p className={styles.more}>+{more} more</p>}
+    </div>
+  );
+}
+
+function LaneBar({ lane, now, formats, nextId }: BoardProps & { lane: Lane }) {
+  const { event } = lane;
+  return (
+    <p className={cx(styles.lane, event.id === nextId && styles.next)} style={{ gridColumn: `${lane.from + 1} / ${lane.to + 2}`, gridRow: lane.row + 1 }}>
+      <span className={styles.laneTitle}>{event.title}</span>
+      {!event.allDay && <time className={styles.laneTime} dateTime={event.start}>{timeLabel(event, now, formats)}</time>}
+    </p>
+  );
+}
+
+/**
+ * The week as a wall calendar: seven columns from today, each headed by its date and listing that day's events
+ * with their time, place and title. Events across several days are bars over the columns they cover. A day with
+ * more events than fit says how many more.
+ */
+function WeekBoard({ events, now, formats }: { events: readonly CalendarEvent[]; now: number; formats: Formats }) {
+  const board = useRef<HTMLDivElement>(null);
+  const today = formats.dayNumber(now);
+  const columns = weekColumns(events, now, formats);
+  const lanes = weekLanes(events, now, formats);
+  const shared = { now, formats, nextId: pickNext(events, now)?.id ?? null };
+  const fit = useDayFit(board, events.map((event) => event.id).join() + lanes.length);
+  return (
+    <div ref={board} className={styles.board} style={{ "--days": WEEK_DAYS } as CSSProperties}>
+      {columns.map(({ day, events: dayEvents }, i) => (
+        <div key={day} className={cx(styles.dayHead, day === today && styles.today, dayEvents.length === 0 && styles.quiet)} style={{ gridColumn: i + 1 }}>
+          <span className={styles.date}>{formats.dayOfMonth(day)}</span>
+          <span className={styles.weekday}>{day === today ? "Today" : formats.shortWeekday(day)}</span>
+        </div>
+      ))}
+      {lanes.length > 0 && (
+        <div className={styles.lanes}>{lanes.map((lane) => <LaneBar key={lane.event.id} lane={lane} {...shared} />)}</div>
+      )}
+      {columns.map((column, i) => (
+        <div key={column.day} className={cx(styles.dayBody, column.day === today && styles.today)} style={{ gridColumn: i + 1 }}>
+          <DayEvents column={column} fit={fit[String(column.day)]} {...shared} />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -256,18 +236,12 @@ function emptyNote(status: EventsResponse["status"], fixed: boolean, quietWhenEm
   return !fixed && status === "error" ? "Calendar not connected" : "No upcoming events";
 }
 
-/**
- * The week ahead from the club calendar, drawn as a week of tracks (see WeekStrip) with the events in words beside
- * it: the next one in the compact layout, all that fit in the full one. Fills its container.
- */
-export function Events({ layout = "compact", events: fixed, onState, quietWhenEmpty = false }: Props) {
+/** The week ahead from the club calendar, as a wall calendar (see WeekBoard). Fills its container. */
+export function Events({ events: fixed, onState, quietWhenEmpty = false }: Props) {
   const { status, list, now, formats } = useCalendar(fixed);
   useReport(onState, { status, count: list.length });
   const shown = useHeldList(list, quietWhenEmpty);
-  const next = pickNext(shown, now);
-  const week = useMemo(() => buildWeek(shown, now, next?.id ?? null, formats), [shown, now, next, formats]);
-
-  if (!next) {
+  if (!shown.length) {
     const note = emptyNote(status, fixed !== undefined, quietWhenEmpty);
     return (
       <section className={cx(styles.events, !quietWhenEmpty && styles.isEmpty)} aria-label="Upcoming events">
@@ -276,11 +250,9 @@ export function Events({ layout = "compact", events: fixed, onState, quietWhenEm
     );
   }
 
-  const strip = <WeekStrip week={week} formats={formats} today={formats.dayNumber(now)} />;
-  const full = layout === "full";
   return (
-    <section className={cx(styles.events, full ? styles.full : styles.compact)} aria-label="Upcoming events" style={{ "--days": WEEK_DAYS } as CSSProperties}>
-      {full ? <>{strip}<Agenda events={shown} now={now} formats={formats} /></> : <><NextUp event={next} now={now} formats={formats} />{strip}</>}
+    <section className={styles.events} aria-label="Upcoming events">
+      <WeekBoard events={shown} now={now} formats={formats} />
     </section>
   );
 }

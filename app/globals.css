@@ -48,13 +48,24 @@ p {
   overflow: hidden;
   /* Clear: the waves (app/Background.tsx) are behind the stage, and the text sits straight on them. */
   background: transparent;
-  /* The brand's rhythm is 46 and 31. 46 + 42 + 42 + 46 keeps the middle column at the 816px the chart is tuned for. */
+  /* 46 + 42 + 42 + 46 keeps the middle column at the 816px the chart is tuned for. Rows are 42px apart too, so each
+     ledger rule (and the frame, 25px in from the edge) has the same space on every side of it. */
+  --rule-gap: 42px;
   padding: var(--bab-row);
   display: grid;
   grid-template-columns: 432px minmax(0, 1fr) 496px;
-  grid-template-rows: 56px minmax(0, 1fr);
-  column-gap: 42px;
-  row-gap: var(--bab-pad);
+  /* The masthead, a gap, the main row, and the week's events along the bottom under the chart and the carousel.
+     The gaps are tracks of their own, so the band can open from nothing (no events) without a gap left behind. */
+  --band-gap: 0px;
+  --band-height: 0px;
+  grid-template-rows: 56px var(--rule-gap) minmax(0, 1fr) var(--band-gap) var(--band-height);
+  column-gap: var(--rule-gap);
+  transition: grid-template-rows var(--bab-slow) var(--bab-ease);
+}
+
+.dashboard:has(.events-band.is-open) {
+  --band-gap: var(--rule-gap);
+  --band-height: 290px;
 }
 
 /* The ledger frame: a hairline around everything on the stage, half a column gap outside the content. */
@@ -66,15 +77,18 @@ p {
   border: var(--bab-hair) solid var(--line);
 }
 
-/* Ledger rules: one under the masthead, one in each column gap, all meeting the frame. */
+/* Ledger rules: one under the masthead, one in each column gap, one over the events band, all meeting the frame. */
 .top-row,
-.featured-slot {
+.feed-slot,
+.featured-slot,
+.events-band {
   position: relative;
 }
 
 .top-row::after,
-.featured-slot::before,
-.featured-slot::after {
+.feed-slot::after,
+.featured-slot::after,
+.events-band::before {
   content: "";
   position: absolute;
   pointer-events: none;
@@ -83,23 +97,31 @@ p {
 .top-row::after {
   left: -21px;
   right: -21px;
-  bottom: -16px;
+  bottom: -22px;
   border-top: var(--bab-hair) solid var(--line);
 }
 
-.featured-slot::before,
+.feed-slot::after,
 .featured-slot::after {
-  top: -15px;
+  top: -21px;
   bottom: -21px;
   border-left: var(--bab-hair) solid var(--line);
 }
 
-.featured-slot::before {
-  left: -21px;
+.feed-slot::after {
+  right: -22px;
 }
 
+/* Between the chart and the carousel; it ends at the rule over the events band, or at the frame. */
 .featured-slot::after {
   right: -22px;
+}
+
+.events-band::before {
+  top: -21px;
+  left: -21px;
+  right: -21px;
+  border-top: var(--bab-hair) solid var(--line);
 }
 
 /* Row 1: the B@B mark at the left edge, then the ticker tape in the width that is left. */
@@ -130,7 +152,7 @@ p {
 /* Middle column: featured market (header above its chart). */
 .featured-slot {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
 }
@@ -138,7 +160,7 @@ p {
 /* Left column, under the logo: the news and posts feed, and under it the coin flip tile while it is set up. */
 .feed-slot {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3 / 6;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -251,7 +273,6 @@ p {
   flex: none;
   margin-left: auto;
   font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
 }
 
 .feed-title,
@@ -359,53 +380,32 @@ p {
   font-size: 28px;
 }
 
-/* Right column, 496 x 901: what Spotify is playing, the carousel of spotted photos, quotes and chumming photos in
-   the height that is left, and under it the club calendar while it has events to list. */
+/* Right column: what Spotify is playing, and the carousel of quotes and chumming photos in the height that is left. */
 .side-slot {
-  --side-gap: 24px;
-  /* The next event in words (66px), then the week strip (app/Events.tsx). */
-  --events-height: 200px;
   grid-column: 3;
-  grid-row: 2;
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--side-gap);
+  gap: 24px;
 }
 
-/* The calendar's place under the carousel. Closed (no events, or the Jam QR is up) it takes no height and the
-   carousel has the column; the negative margin cancels the column's gap, which the box inside carries instead. */
-.events-slot {
-  flex: none;
-  height: 0;
-  margin-top: calc(-1 * var(--side-gap));
-  overflow: hidden;
+/* The week's events (app/Events.tsx), under the chart and the carousel. Closed it takes no height (see .dashboard). */
+.events-band {
+  grid-column: 2 / 4;
+  grid-row: 5;
+  min-width: 0;
+  min-height: 0;
   opacity: 0;
   visibility: hidden;
-  transition: height var(--bab-slow) var(--bab-ease), opacity var(--bab-fast) linear, visibility 0s linear var(--bab-slow);
+  transition: opacity var(--bab-fast) linear, visibility 0s linear var(--bab-slow);
 }
 
-.events-slot.is-open {
-  height: calc(var(--events-height) + var(--side-gap));
+.events-band.is-open {
   opacity: 1;
   visibility: visible;
-  transition: height var(--bab-slow) var(--bab-ease), opacity var(--bab-slow) linear var(--bab-fast), visibility 0s;
-}
-
-/* The Jam QR takes 180px more than the song for its minute. The calendar steps aside for that minute rather than
-   the photo: its 201px go back to the carousel, so the picture stays about the size it was. */
-.side-slot:has(.now-playing.is-jam) .events-slot {
-  height: 0;
-  opacity: 0;
-  visibility: hidden;
-  transition: height var(--bab-slow) var(--bab-ease), opacity var(--bab-fast) linear, visibility 0s linear var(--bab-slow);
-}
-
-/* Always its full height, even while the slot around it is opening or closed, so the row count never changes mid-move. */
-.events-box {
-  height: var(--events-height);
-  margin-top: var(--side-gap);
+  transition: opacity var(--bab-slow) linear var(--bab-fast), visibility 0s;
 }
 
 .now-playing {
@@ -475,7 +475,6 @@ p {
   flex: none;
   color: var(--faint);
   font: 400 20px/1.3 var(--mono);
-  text-transform: uppercase;
 }
 
 /* Who asked for the track in Slack. It takes the title's second line, so the tile stays the same height. */
@@ -575,7 +574,6 @@ p {
 .jam-eyebrow {
   color: var(--faint);
   font: 400 20px/1.3 var(--mono);
-  text-transform: uppercase;
 }
 
 .jam-title {
@@ -746,7 +744,6 @@ p {
   color: var(--faint);
   font: 400 20px/1.3 var(--mono);
   font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -756,9 +753,9 @@ p {
   .spot-caption-item.is-active,
   .now-playing,
   .now-playing-fill,
-  .events-slot,
-  .events-slot.is-open,
-  .side-slot:has(.now-playing.is-jam) .events-slot {
+  .dashboard,
+  .events-band,
+  .events-band.is-open {
     transition: none;
   }
 
@@ -778,42 +775,21 @@ p {
   font-size: 28px;
 }
 
-/* Focus mode ("@bot focus" in Slack, lib/commands.ts): the tape, the featured chart, and the calendar filling the
-   right column while it has events; with none, the chart takes the whole stage. */
+/* Focus mode ("@bot focus" in Slack, lib/commands.ts): the tape, the featured chart, and the week's events across
+   the whole width under it while there are any. */
 .dashboard.is-focus {
-  grid-template-columns: minmax(0, 1fr) 496px;
-}
-
-.dashboard.is-focus .featured-slot {
-  grid-column: 1;
-}
-
-.dashboard.is-focus .side-slot {
-  grid-column: 2;
-}
-
-.dashboard.is-focus .featured-slot::before {
-  content: none;
-}
-
-/* With the song and the carousel gone, the calendar has the whole column, and lists as many events as fit without
-   paging (rotate={false} in app/page.tsx). */
-.dashboard.is-focus .events-slot.is-open {
-  flex: 1 1 auto;
-  height: auto;
-  margin-top: 0;
-}
-
-.dashboard.is-focus .events-box {
-  height: 100%;
-  margin-top: 0;
-}
-
-.dashboard.is-focus:not(:has(.events-slot.is-open)) {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.dashboard.is-focus:not(:has(.events-slot.is-open)) .side-slot,
-.dashboard.is-focus:not(:has(.events-slot.is-open)) .featured-slot::after {
-  display: none;
+.dashboard.is-focus:has(.events-band.is-open) {
+  --band-height: 300px;
+}
+
+.dashboard.is-focus .featured-slot,
+.dashboard.is-focus .events-band {
+  grid-column: 1;
+}
+
+.dashboard.is-focus .featured-slot::after {
+  content: none;
 }
