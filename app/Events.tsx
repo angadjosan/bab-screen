@@ -45,6 +45,8 @@ type Props = {
    * last event ends its row stays where it was, so the block can be faded out rather than blanked.
    */
   quietWhenEmpty?: boolean;
+  /** false: never page. Only the rows that fit are shown, soonest first, and the rest wait their turn off screen. */
+  rotate?: boolean;
 };
 
 type Formats = {
@@ -121,9 +123,9 @@ function describe(event: CalendarEvent, now: number, formats: Formats): When {
 /**
  * The week ahead from the club calendar. Fills its container (give it a width and a height) and shows
  * as many whole rows as fit: nothing is ever cut off or scrolled. More events than rows are shown a
- * page at a time, in turn.
+ * page at a time, in turn (unless `rotate` is false).
  */
-export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState, quietWhenEmpty = false }: Props) {
+export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState, quietWhenEmpty = false, rotate = true }: Props) {
   const [data, setData] = useState<EventsResponse | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [height, setHeight] = useState(0);
@@ -223,7 +225,7 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
   const rowHeight = rows > 0 ? Math.min(ROW_MAX_PX, Math.floor((height - (showLabel ? HEADER_PX : 0) - (rows - 1) * RULE_PX) / rows)) : 0;
 
   // Pages are whole rows of one height; the last may be short, and leaves its space empty rather than stretch.
-  const pages = rows > 0 ? Math.ceil(shown.length / rows) : 1;
+  const pages = rows > 0 && rotate ? Math.ceil(shown.length / rows) : 1;
   const [page, setPage] = useState(0);
   // An event ending or the box changing can leave fewer pages than the one being shown: back to the first.
   const current = page < pages ? page : 0;

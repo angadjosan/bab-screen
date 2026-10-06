@@ -314,7 +314,7 @@ export default function Dashboard() {
           {!focus && <PhotoCarousel />}
           <div className={`events-slot ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents}>
             <div className="events-box">
-              <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
+              <Events quietWhenEmpty maxRows={focus ? 99 : undefined} rotate={!focus} onState={({ count }) => setHasEvents(count > 0)} />
             </div>
           </div>
         </div>
