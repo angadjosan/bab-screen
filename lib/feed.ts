@@ -24,6 +24,7 @@ import {
   REFRESH_MINUTES,
   TARGET_ITEMS,
 } from "./feed-sources";
+import { refreshClubNews } from "./club-news";
 import { refreshNewsworthy } from "./newsworthy";
 import { readJson, writeJson } from "./songs-store";
 import type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
@@ -234,6 +235,8 @@ async function refresh(): Promise<void> {
   // The newsworthy tokens are chosen from the same fetch, after the feed is up. It keeps its own
   // schedule (not every refresh) and its own state, and never rejects.
   await refreshNewsworthy(results, Date.now());
+  // So are the stories about the club and its people (lib/club-news.ts), which read each new article once.
+  await refreshClubNews(results, Date.now());
 }
 
 /**

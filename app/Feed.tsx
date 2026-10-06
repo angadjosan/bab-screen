@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FEED_LABELS, type FeedItem, type FeedLabel, type FeedResponse } from "@/lib/feed-types";
+import { FEED_LABELS, type ClubStory, type FeedItem, type FeedLabel, type FeedResponse } from "@/lib/feed-types";
 import { useFeaturedStory, type Story } from "./Markets";
 import styles from "./Story.module.css";
+import { age } from "./time-ago";
+import { ClubNote, useClubStories, useClubTurn } from "./ClubNote";
 
 /** How fast the list drifts upward, in stage pixels per second. The loop takes as long as the list is tall. */
 export const FEED_SCROLL_PX_PER_S = 30;
@@ -96,17 +98,6 @@ function lede(summary: string, title: string) {
   }
   const sentence = body.slice(0, stop).trim();
   return sentence.length > SUMMARY_MAX_CHARS || sentence.toLowerCase() === title.toLowerCase() ? null : sentence;
-}
-
-function age(publishedAt: string, now: number) {
-  const published = Date.parse(publishedAt);
-  if (!Number.isFinite(published)) return null;
-  const minutes = Math.floor((now - published) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h ago`;
-  if (minutes < 60 * 24 * 7) return `${Math.floor(minutes / (60 * 24))}d ago`;
-  return new Date(published).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /** The server pins alerts for ALERT_MAX_AGE_HOURS (lib/feed-sources.ts); the page holds to the same limit on its own clock. */
@@ -247,10 +238,25 @@ function Note({ story, on }: { story: Story; on: boolean }) {
 }
 
 /**
+ * What covers the list now: a newsworthy token's note while that token is featured, otherwise a story about the
+ * club when its turn comes (app/ClubNote.tsx). The last of each stays in the markup while it fades out.
+ */
+function useSpotlight() {
+  const story = useFeaturedStory();
+  const club = useClubTurn(useClubStories(), story !== null);
+  const [noted, setNoted] = useState<Story | null>(null);
+  if (story && story !== noted) setNoted(story);
+  const [clubNoted, setClubNoted] = useState<ClubStory | null>(null);
+  if (club && club !== clubNoted) setClubNoted(club);
+  return { story, club, noted, clubNoted, covered: story !== null || club !== null };
+}
+
+/**
  * Curated news and posts from /api/feed, drifting slowly upward in a loop. Fills its container.
  *
- * While a newsworthy token is in the featured slot (see MarketsProvider) its note covers the list, and the
- * list stops moving underneath, so it carries on from the same place when the note goes.
+ * While a newsworthy token is in the featured slot (see MarketsProvider) its note covers the list, and so does a
+ * story about the club when its turn comes. The list stops moving underneath, so it carries on from the same
+ * place when the note goes.
  *
  * The track holds two copies of the list, the second below the first. It slides up by the height of the
  * first, which leaves the second exactly where the first began; the first is then dropped and a fresh copy
@@ -265,11 +271,7 @@ export function Feed() {
   const [now, setNow] = useState(() => Date.now());
   const [paging, setPaging] = useState<{ pages: Page[]; index: number }>({ pages: [], index: 0 });
   const reduced = useReducedMotion();
-  const story = useFeaturedStory();
-  const covered = story !== null;
-  // The last note stays in the markup while it fades out.
-  const [noted, setNoted] = useState<Story | null>(null);
-  if (story && story !== noted) setNoted(story);
+  const { story, club, noted, clubNoted, covered } = useSpotlight();
 
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
@@ -471,7 +473,8 @@ export function Feed() {
       {shownAlerts.length > 0 && <Alerts items={shownAlerts} now={now} />}
       <div className={styles.column}>
         <div className={covered ? `${styles.layer} ${styles.away}` : styles.layer} aria-hidden={covered || undefined}>{list}</div>
-        {noted && <Note story={noted} on={covered} />}
+        {noted && <Note story={noted} on={story !== null} />}
+        {clubNoted && <ClubNote story={clubNoted} on={club !== null} now={now} />}
       </div>
     </div>
   );

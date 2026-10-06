@@ -91,3 +91,29 @@ export type NewsworthyResponse = {
   agentModel: string | null;
   message?: string;
 };
+
+/**
+ * A story about the club or someone in it, for the feed column's spotlight. Found in the news by lib/club-news.ts
+ * (an article that names a member of the club's Slack, or the club), or shared in Slack with "@bot spotlight".
+ * All of its text is the publisher's or the poster's own, never a model's. Served by GET /api/club-news.
+ */
+export type ClubStory = {
+  id: string;
+  /** The headline, or for a post the post itself. */
+  title: string;
+  /** The article's opening lines, when the feed or the page gave them. */
+  summary: string | null;
+  /** Who published it: an outlet, or "Zain Javaid on X". */
+  source: string;
+  url: string;
+  imageUrl: string | null;
+  publishedAt: string;
+  /** Who it is about: club members it names, or what the person who shared it wrote. Empty for a story about the club. */
+  people: string[];
+  via: "news" | "slack";
+  /** The Slack name of whoever shared it, for stories shared with "@bot spotlight". */
+  sharedBy: string | null;
+};
+
+export type ClubNewsResponse = { stories: ClubStory[]; updatedAt: string | null };
+

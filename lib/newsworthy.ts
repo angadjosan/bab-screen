@@ -43,7 +43,9 @@ export const REFRESH_MINUTES = 30;
 /** A list that could not be renewed is shown until it is this old. */
 export const TTL_MINUTES = 120;
 /** At most this many tokens are on the list. */
-export const MAX_TOKENS = 6;
+export const MAX_TOKENS = 3;
+/** A story must be carried by at least this many outlets: one outlet's governance-forum write-up is not news. */
+export const MIN_OUTLETS = 2;
 /** Only reports newer than this can make a token newsworthy. */
 export const MAX_AGE_HOURS = 24;
 /** The note's hard length limit, and the shortest that is worth showing. */
@@ -100,11 +102,11 @@ const SYSTEM_PROMPT = `You write short news notes for a large wall display in th
 
 You will be given the tokens the screen can show, and a numbered list of candidate news items collected automatically from the RSS feeds of news outlets: outlets, age, headline and, where the feed gave one, the opening lines.
 
-Choose the tokens that are in the news right now: at most ${MAX_TOKENS}, fewer when the news does not support that many, and none when nothing qualifies. A token qualifies only when at least one candidate reports a concrete, recent development about that token itself or the protocol, network or company behind it: a launch or upgrade, a hack or outage, a court or regulatory decision, a listing, a governance vote, a large deal or partnership, a notable change in usage. It does not qualify because its price moved, because someone predicts its price or gives an opinion about it, because a market round-up mentions it in passing, or because of sponsored or promotional material. Prefer tokens reported by several outlets, and recent reports over old ones. Do not fill the list for its own sake: a token with a single minor report is better left out. Put the most newsworthy first.
+Choose only the tokens with major news right now: at most ${MAX_TOKENS}, usually fewer, and none on most days. The bar is high. A token qualifies only when several outlets report a major, recent development about that token itself or the protocol, network or company behind it, the kind of story club members would bring up with each other that day: a hack, exploit or outage that cost users money or stopped the network; a court ruling, charge or regulatory decision; a launch or upgrade that changes how the network works; a listing or delisting on a major exchange; an acquisition or a deal worth hundreds of millions of dollars. These do not qualify, however they are written up: routine governance proposals and votes, parameter or interest-rate changes, treasury operations, integrations and partnerships between protocols, product updates, grants, conference appearances, price moves and predictions, opinions, market round-ups, and anything sponsored or promotional. When in doubt, leave it out. Put the most important first.
 
 For each token give:
 - symbol: its ticker, exactly as written in the token list.
-- sources: the numbers of the candidates that report this development. The note may use nothing else.
+- sources: the numbers of all the candidates that report this development, from at least ${MIN_OUTLETS} different outlets. The note may use nothing else.
 - summary: one or two plain sentences, ${SUMMARY_TARGET_CHARS} characters at most, saying what happened.
 
 Rules for the summary:
@@ -181,7 +183,7 @@ export function buildPrompt(candidates: Candidate[], universe: Map<string, Unive
       return `[${index + 1}] ${sources.join(", ")} | ${age(item.publishedAt, now)} | ${line(item.title, PROMPT_TITLE_MAX)}${summary}`;
     }),
     "</candidates>",
-    `Reply with at most ${MAX_TOKENS} tokens that are in the news, each with its candidate numbers and its note.`,
+    `Reply with at most ${MAX_TOKENS} tokens with major news, each with its candidate numbers and its note, or with none.`,
   ].join("\n");
 }
 
@@ -253,6 +255,9 @@ export function cleanSummary(raw: unknown, grounds: string, names: string[] = []
   return summary.length >= SUMMARY_MIN_CHARS ? summary : null;
 }
 
+/** How many different outlets carried the cited candidates. */
+const outletCount = (cited: Candidate[]) => new Set(cited.flatMap((candidate) => candidate.sources)).size;
+
 /**
  * Turns the model's answer into the tokens to show. An answer of the wrong shape is an error;
  * an entry that fails a check is dropped and noted, and the rest stand. Exported for the checks.
@@ -279,7 +284,7 @@ export function parseNewsworthy(output: unknown, candidates: Candidate[], univer
       .map((n) => candidates[n - 1]);
     if (!cited.length) { refuse("no_valid_sources"); continue; }
     const about = cited.filter(({ item }) => mentionsToken(`${item.title} ${item.summary ?? ""}`, token));
-    if (!about.length) { refuse("sources_do_not_mention_token"); continue; }
+    if (outletCount(about) < MIN_OUTLETS) { refuse(about.length ? "too_few_outlets" : "sources_do_not_mention_token"); continue; }
     const summary = cleanSummary(raw.summary, about.map(({ item }) => `${item.title} ${item.summary ?? ""}`).join("\n"), names);
     if (!summary) { refuse("unusable_summary"); continue; }
     seen.add(symbol);

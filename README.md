@@ -107,6 +107,8 @@ Mention the Slack bot in the songs channel with one of these words:
 | `@spotbot-reader pause` (or `stop`) | Pauses Spotify. |
 | `@spotbot-reader play` (or `resume`) | Starts Spotify again. |
 | `@spotbot-reader jam` | Shows the Jam QR for a minute (see "Jam QR"). |
+| `@spotbot-reader spotlight <link> <who>` | Puts a story about the club or someone in it in the feed column's spotlight for three days (see "Club in the news"). `<who>` is optional, e.g. `Nicholas Chua`. |
+| `@spotbot-reader spotlight off` | Takes every shared story down again. |
 
 Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause or play said during focus mode wins: unfocus then leaves the music as it is. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands are read by the same 20-second poll as song requests (so `/api/songs/sync` must have been opened since the server started), and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
 
@@ -170,7 +172,7 @@ The response's `sources` array shows, for every source, whether the last fetch w
 
 ## Newsworthy tokens
 
-`GET /api/newsworthy` returns up to six tokens that are in the news right now, each with a one- or two-sentence note and the outlets it is drawn from. The page (`MarketsProvider` in `app/Markets.tsx`) reads it every minute, adds the tokens to the tape and works them into the featured rotation. While one of them is featured, the feed column fades to its note: a one-line heading ("Arbitrum in the news"), the note, and a line naming the outlets it is an AI summary of. The featured header beside it already shows the name and ticker large, so the note does not repeat them. The note is set at the largest of four sizes at which it fits the column, which shrinks while recent spots and the coin flip tile are showing; below the smallest, the note is cut to the lines that fit, and nothing spills into the tiles underneath. When the token leaves, the feed fades back and carries on scrolling from where it stopped. The set tokens never get a note: BTC, ETH and SOL are in the news every day and would crowd the feed out, and their stories are in the feed anyway.
+`GET /api/newsworthy` returns at most three tokens with major news right now (often none), each with a one- or two-sentence note and the outlets it is drawn from. The page (`MarketsProvider` in `app/Markets.tsx`) reads it every minute, adds the tokens to the tape and works them into the featured rotation. While one of them is featured, the feed column fades to its note: a one-line heading ("Arbitrum in the news"), the note, and a line naming the outlets it is an AI summary of. The featured header beside it already shows the name and ticker large, so the note does not repeat them. The note is set at the largest of four sizes at which it fits the column, which shrinks while recent spots and the coin flip tile are showing; below the smallest, the note is cut to the lines that fit, and nothing spills into the tiles underneath. When the token leaves, the feed fades back and carries on scrolling from where it stopped. The set tokens never get a note: BTC, ETH and SOL are in the news every day and would crowd the feed out, and their stories are in the feed anyway.
 
 How the list is made (`lib/newsworthy.ts`), in the background as part of the feed's refresh and never inside a request:
 
@@ -182,11 +184,23 @@ How the list is made (`lib/newsworthy.ts`), in the background as part of the fee
 What the model writes is shown on a public screen, and it writes after reading untrusted headlines, so this is a weaker guarantee than the feed's "numbers only". What is checked before a note is shown:
 
 - The ticker must be in the fixed list (the JSON schema makes it an enum, and it is looked up again). The name, venue and market shown come from that list, not from the model.
-- The candidate numbers it cites must exist, and a candidate counts only if its own text names the token. A note with no such candidate is dropped. The outlets shown are those candidates' sources.
+- The candidate numbers it cites must exist, and a candidate counts only if its own text names the token. The story must come from at least two outlets (`MIN_OUTLETS`), so one outlet's write-up of a governance proposal or a rate change is never a note. The outlets shown are those candidates' sources.
+- The prompt sets a high bar: hacks and outages, court and regulatory decisions, launches and upgrades that change how a network works, major exchange listings, and deals worth hundreds of millions. Routine governance votes, parameter and rate changes, integrations, partnerships and product updates are named as not qualifying.
 - The note is reduced to plain text in Latin script. A sentence is removed if it contains a link, a web address, an @handle or a hashtag, if it trips the feed's filters for adverts, price calls, crude language or text addressed to a model, or if it contains a figure that is not in the cited candidates. What is left is capped at 260 characters in whole sentences; under 40 characters the token is dropped.
 - The page renders the note as text. It is never a link or markup.
 
 What these checks cannot do: they cannot tell whether a sentence is true. A model can still misread its sources, state something the headlines only imply, or be steered by a misleading or planted article from one of the RSS outlets into writing a false or slanted sentence in plain words. The note is labelled "AI summary" and names its outlets for that reason. `.data/newsworthy.json` records which model wrote the current list and which entries were dropped and why.
+
+## Club in the news
+
+Between token notes, a story about the club or someone in it takes the feed column for 20 seconds every 90 seconds, in turn with any others (`app/ClubNote.tsx`). It is headed by the B@B mark and who it is about ("Ayush Paul in the news", or "B@B in the news"), with the article's picture when the column has room for it, the headline and opening lines, and the publisher. Nothing in it is written by a model.
+
+Stories come in two ways (`lib/club-news.ts`, served by `GET /api/club-news`):
+
+- **Found in the news.** After each feed refresh, every new article from the RSS outlets is read once, page and all, and kept when it names someone in the club's Slack workspace and mentions Berkeley, or names the club. Names often appear only in the body or a photo caption: the Daily Cal's story on the Snackpass leaderboard names Ayush Paul only in a caption. The names come from Slack's `users.list` (`lib/club-roster.ts`, every 12 hours, deactivated accounts included so alumni count; full names of two or more words only). A Google News search for "Blockchain at Berkeley" adds coverage from outlets the feed does not follow. A found story stays up for 7 days from publication.
+- **Shared in Slack.** `@spotbot-reader spotlight <link> <who>` in the songs channel, for stories that never name the person, like a co-founder's launch post. Web pages are read from their preview tags; posts on X through FxTwitter's public API (`api.fxtwitter.com`), since X gives nothing without an account. A shared story stays up for 3 days, credited to whoever shared it; `@spotbot-reader spotlight off` takes shared stories down.
+
+Up to 30 new articles are read per refresh, 4 at a time, and what was found is kept in `.data/club-news.json`, so an article is never read twice.
 
 ## Upcoming events
 

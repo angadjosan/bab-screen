@@ -1,0 +1,105 @@
+/*
+ * A story about the club or one of its people, over the feed column (app/ClubNote.tsx). Stacked in the same box
+ * as the scrolling list and the token note (Story.module.css), and faded the same way. The column's height
+ * changes with the recent spots and the coin flip tile, so the picture goes first when it gets short.
+ */
+.note {
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow: hidden;
+  padding-top: 22px;
+  color: var(--ink);
+  transition: opacity var(--bab-slow) var(--bab-ease), visibility 0s;
+}
+
+.note:not(.on) {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--bab-slow) var(--bab-ease), visibility 0s var(--bab-slow);
+}
+
+@starting-style {
+  .note.on {
+    opacity: 0;
+  }
+}
+
+.heading {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0;
+  color: var(--bab-gold);
+  font: 500 26px/32px var(--sans);
+}
+
+/* The club's mark, at the size of the line: what makes this the club's story and not just news. */
+.mark {
+  flex: none;
+  width: 36px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.image {
+  flex: 0 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-height: 240px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--bab-surface-1);
+}
+
+@container (height < 560px) {
+  .image {
+    display: none;
+  }
+}
+
+.title {
+  flex: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font: 500 32px/40px var(--sans);
+  text-wrap: pretty;
+}
+
+.summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font: 400 22px/30px var(--sans);
+}
+
+@container (height < 380px) {
+  .summary {
+    display: none;
+  }
+}
+
+.source {
+  flex: none;
+  margin-top: auto;
+  color: var(--muted);
+  font: 400 22px/30px var(--sans);
+  text-wrap: pretty;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note,
+  .note:not(.on) {
+    transition: none;
+  }
+}

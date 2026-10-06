@@ -97,7 +97,26 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
   }
 }
 
-async function mapLimit<T, R>(inputs: T[], limit: number, worker: (input: T) => Promise<R>): Promise<R[]> {
+/** A web page's HTML, capped at FETCH_MAX_BYTES, or null when it cannot be read. Never throws. */
+export async function fetchPage(url: string): Promise<string | null> {
+  try {
+    const response = await get(url, { Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5" });
+    return response.status >= 200 && response.status < 300 ? response.body : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A JSON document, or null when it cannot be read or parsed. Never throws. */
+export async function fetchJson(url: string): Promise<unknown> {
+  try {
+    return await getJson(url);
+  } catch {
+    return null;
+  }
+}
+
+export async function mapLimit<T, R>(inputs: T[], limit: number, worker: (input: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(inputs.length);
   let next = 0;
   await Promise.all(
