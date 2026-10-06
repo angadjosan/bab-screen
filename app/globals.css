@@ -236,6 +236,23 @@ p {
   text-overflow: ellipsis;
 }
 
+/* The item's kind, from the labelling model (lib/feed-labels.ts). A filled chip, so it reads as a tag and not as
+   another source name; breaking news takes the screen's warning red, everything else stays neutral. */
+.feed-pill {
+  flex: none;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--bab-surface-2);
+  color: var(--muted);
+  font: 500 16px/26px var(--sans);
+  white-space: nowrap;
+}
+
+.feed-pill.is-breaking {
+  background: color-mix(in oklab, var(--down) 18%, transparent);
+  color: var(--down);
+}
+
 .feed-time {
   flex: none;
   margin-left: auto;
@@ -277,6 +294,65 @@ p {
   font-size: 24px;
   font-weight: 400;
   line-height: 32px;
+}
+
+/* The feed column: pinned campus-safety alerts (when there are any) above the scrolling list. */
+.feed-column {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.feed-column > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+/* A current safety incident on or near campus, from the feed's alerts group (lib/feed-agent.ts). It does not
+   scroll, and it is set apart from the news by a bar in the price-down red, the screen's only warning colour. */
+.feed-alerts {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.feed-alert {
+  padding: 16px 0 18px 19px;
+  border-left: 4px solid var(--down);
+  background: color-mix(in oklab, var(--down) 8%, transparent);
+}
+
+.feed-alert-mark {
+  flex: none;
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--down);
+  animation: feed-alert-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes feed-alert-pulse {
+  50% {
+    opacity: .35;
+  }
+}
+
+.feed-alert-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 35px;
 }
 
 .feed-note {
@@ -692,7 +768,8 @@ p {
     transition: none;
   }
 
-  .feed-group {
+  .feed-group,
+  .feed-alert-mark {
     animation: none;
   }
 }
