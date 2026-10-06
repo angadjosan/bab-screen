@@ -25,6 +25,8 @@ type SpotResponse = {
   message?: string;
 };
 
+/** How often the page asks whether focus mode is on (switched from Slack, lib/commands.ts). */
+const FOCUS_POLL_MS = 4_000;
 /** How long each slide of the carousel stays up. */
 const SLIDE_MS = 8_000;
 /** A slide whose picture is still loading when its turn comes is waited for this long, then passed over. */
@@ -386,6 +388,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   // The calendar block is given room only while it has events to list (not while the calendar is unconnected or empty).
   const [hasEvents, setHasEvents] = useState(false);
+  // Focus mode: only the ticker tape, the featured market and the calendar.
+  const [focus, setFocus] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -405,6 +409,26 @@ export default function Dashboard() {
   }, [refresh]);
 
   useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/focus", { cache: "no-store" });
+        if (!response.ok) return;
+        const body = (await response.json()) as { on?: boolean };
+        if (alive) setFocus(body.on === true);
+      } catch {
+        // Stay as we are; the next poll tries again.
+      }
+    };
+    poll();
+    const timer = window.setInterval(poll, FOCUS_POLL_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     const fit = () => document.documentElement.style.setProperty("--fit", String(Math.min(window.innerWidth / 1920, window.innerHeight / 1080)));
     fit();
     window.addEventListener("resize", fit);
@@ -413,19 +437,21 @@ export default function Dashboard() {
 
   return (
     <MarketsProvider>
-      <main className="dashboard">
+      <main className={`dashboard ${focus ? "is-focus" : ""}`}>
         <div className="top-row">
           <img className="brand-logo" src="/bab-logo.svg" alt="Blockchain at Berkeley" width={344} height={311} />
           <div className="tape-slot"><TickerTape /></div>
         </div>
-        <div className="feed-slot">
-          <div className="feed-box"><Feed /></div>
-          <CoinFlip />
-        </div>
+        {!focus && (
+          <div className="feed-slot">
+            <div className="feed-box"><Feed /></div>
+            <CoinFlip />
+          </div>
+        )}
         <div className="featured-slot"><FeaturedMarket /></div>
         <div className="side-slot">
-          <NowPlaying />
-          <SpotCard spot={spot} loading={loading} />
+          {!focus && <NowPlaying />}
+          {!focus && <SpotCard spot={spot} loading={loading} />}
           <div className={`events-slot ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents}>
             <div className="events-box">
               <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />

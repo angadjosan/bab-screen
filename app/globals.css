@@ -706,3 +706,30 @@ p {
   color: var(--muted);
   font-size: 28px;
 }
+
+/* Focus mode ("@bot focus" in Slack, lib/commands.ts): the tape, the featured chart, and the calendar in the right
+   column while it has events; with none, the chart takes the whole stage. */
+.dashboard.is-focus {
+  grid-template-columns: minmax(0, 1fr) 496px;
+}
+
+.dashboard.is-focus .featured-slot {
+  grid-column: 1;
+}
+
+.dashboard.is-focus .side-slot {
+  grid-column: 2;
+}
+
+.dashboard.is-focus .featured-slot::before {
+  content: none;
+}
+
+.dashboard.is-focus:not(:has(.events-slot.is-open)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dashboard.is-focus:not(:has(.events-slot.is-open)) .side-slot,
+.dashboard.is-focus:not(:has(.events-slot.is-open)) .featured-slot::after {
+  display: none;
+}

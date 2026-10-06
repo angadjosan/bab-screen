@@ -1,11 +1,13 @@
 // Song requests: reads new messages from a Slack channel and adds every Spotify track link in
 // them to the playback queue (default) and/or a playlist of the connected Spotify account.
 // Messages without a track link are ignored. A message that mentions the bot with the word "jam"
-// is not a song request: it puts the Jam QR on the screen for a minute (lib/jam.ts).
+// is not a song request: it puts the Jam QR on the screen for a minute (lib/jam.ts). One with "focus",
+// "unfocus", "pause" or "play" is a command (lib/commands.ts).
 //
 // syncSongs() is the single entry point. It is idempotent (a persisted cursor means a message is
 // only ever handled once, across restarts too), safe to call concurrently, and never throws.
 
+import { looksLikeCommand, parseCommand, runCommand } from "./commands";
 import { getJamStatus, looksLikeJamTrigger, parseJamTrigger, recordJamTrigger, type JamStatus } from "./jam";
 import { resolveUserName } from "./slack-users";
 import { readJson, writeJson } from "./songs-store";
@@ -430,8 +432,17 @@ async function pollSlack(state: SongsState, channel: string): Promise<boolean> {
         // Asked before the cursor moves: if Slack cannot be reached, the next poll starts at this message again.
         const jam =
           isCandidate(message) && looksLikeJamTrigger(message.text) ? parseJamTrigger(message.text, await botUserId()) : null;
+        // A message with a track link is a song request even if it says "play".
+        const command =
+          !jam && isCandidate(message) && looksLikeCommand(message.text) && findTrackLinks(message.text ?? "").length === 0
+            ? parseCommand(message.text, await botUserId())
+            : null;
         state.cursor = message.ts;
         if (!isCandidate(message)) continue;
+        if (command) {
+          await runCommand(command, message.user);
+          continue;
+        }
         if (jam) {
           // Never a song request as well: a Jam invite can be a spotify.link short link, which findTrackLinks would pick up.
           await recordJamTrigger({ link: jam.link, postedAtMs: Number(message.ts) * 1000, user: message.user });
