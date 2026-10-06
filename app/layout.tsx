@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Background } from "./Background";
+import { EdgeGlow } from "./EdgeGlow";
 import "./brand.css";
 import "./globals.css";
 
@@ -20,8 +21,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <link rel="stylesheet" href={BRAND_FONTS} />
       </head>
       <body>
-        {/* First in the body: it is a fixed layer at z-index 0, and the stage after it paints on top. */}
+        {/* First in the body: fixed layers at z-index 0, and the stage after them paints on top. */}
         <Background />
+        <EdgeGlow />
         {children}
       </body>
     </html>

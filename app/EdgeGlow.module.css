@@ -1,0 +1,15 @@
+/*
+ * The music's glow along the bottom edge (app/EdgeGlow.tsx). Fixed to the window, not the stage, so it hugs the
+ * screen's own edge; above the background waves and under everything on the stage. Screen blending adds its light
+ * to the waves instead of painting over them.
+ */
+.glow {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}

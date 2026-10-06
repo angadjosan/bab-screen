@@ -9,6 +9,8 @@ const REQUEST_TIMEOUT_MS = 8_000;
 // How long the last known track stays up while /api/now-playing is failing.
 const KEEP_LAST_MS = 20_000;
 const BAR_TICK_MS = 500;
+/** A cover that failed to load is tried again after this long; one failed request must not blank it for the whole song. */
+const ARTWORK_RETRY_MS = 10_000;
 // A showing with less than this left is not worth putting up (the last poll of a minute).
 const JAM_MIN_LEFT_MS = 500;
 // Side of the white square behind the Jam QR: the tile's height while the QR is up (.now-playing.is-jam in globals.css).
@@ -119,6 +121,13 @@ export function NowPlaying() {
     );
     return () => window.clearTimeout(timer);
   }, [jamEndsAt]);
+
+  // Forget a failed cover after a while, so the <img> is put back and asks for it again.
+  useEffect(() => {
+    if (!badArtwork) return;
+    const timer = window.setTimeout(() => setBadArtwork(null), ARTWORK_RETRY_MS);
+    return () => window.clearTimeout(timer);
+  }, [badArtwork]);
 
   const track = data && data !== "idle" && (data.status === "playing" || data.status === "paused") && data.title ? data : null;
   const playing = track?.status === "playing";

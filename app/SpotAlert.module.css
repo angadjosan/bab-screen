@@ -72,7 +72,6 @@
   color: var(--faint);
   font: 400 18px/1.3 var(--mono);
   font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
 }
 
 /* Fixed inside the scaled 1920x1080 stage, so it covers the stage like the coin flip does. */
@@ -149,7 +148,6 @@
 .age {
   color: var(--faint);
   font: 400 26px/1 var(--mono);
-  text-transform: uppercase;
 }
 
 /* Runs down over the takeover's 12 seconds; its duration is set inline from TAKEOVER_MS. */

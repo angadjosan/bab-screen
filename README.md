@@ -1,26 +1,23 @@
 # Markets and Spotbot dashboard
 
-A fixed 1920x1080 screen for a TV: the Blockchain at Berkeley mark (`public/bab-logo.svg`, also the favicon as `app/icon.svg`) beside a scrolling ticker tape across the top, and three columns below it. Left (432px): a feed of news and posts from `/api/feed` that drifts slowly upward in a loop (`app/Feed.tsx`; the speed is `FEED_SCROLL_PX_PER_S`), replaced by a short AI-written note while a token that is in the news is featured (see Newsworthy tokens). Middle (816px): one featured market, its price above a TradingView chart of the last 24 hours in 30-minute candles. Right (496px wide, 901px tall): the song playing in Spotify (120px), a carousel that rotates quotes and chumming photos from Slack, and under it the club calendar's next two events (see "The right column"). A new Spotbot photo takes over the whole screen for a few seconds, and the spots of the last hour are listed under the feed (see "Spot alerts"). The column widths are `grid-template-columns` on `.dashboard` in `app/globals.css`; the chart's 24-hour window depends on the middle column's width, so if that changes, re-tune `zoom` on `.chartFrame` in `app/Markets.module.css` together with `CHART_INTERVAL` in `lib/markets.ts`. Run `npm run dev` and open http://127.0.0.1:3000 in Chrome.
+A fixed 1920x1080 screen for a TV: the Blockchain at Berkeley mark (`public/bab-logo.svg`, also the favicon as `app/icon.svg`) beside a scrolling ticker tape across the top, and three columns below it. Left (432px): a feed of news and posts from `/api/feed` that drifts slowly upward in a loop (`app/Feed.tsx`; the speed is `FEED_SCROLL_PX_PER_S`), replaced by a short AI-written note while a token that is in the news is featured (see Newsworthy tokens). Middle (816px): one featured market, its price above a TradingView chart of the last 24 hours in 30-minute candles. Right (496px wide, 901px tall): the song playing in Spotify (120px), a carousel that rotates quotes and chumming photos from Slack, and under it the club calendar's week (see "Upcoming events"). A new Spotbot photo takes over the whole screen for a few seconds, and the spots of the last hour are listed under the feed (see "Spot alerts"). The column widths are `grid-template-columns` on `.dashboard` in `app/globals.css`; the chart's 24-hour window depends on the middle column's width, so if that changes, re-tune `zoom` on `.chartFrame` in `app/Markets.module.css` together with `CHART_INTERVAL` in `lib/markets.ts`. Run `npm run dev` and open http://127.0.0.1:3000 in Chrome.
 
-## The right column
+## The right column and the events band
 
-Top to bottom, in `.side-slot` (`app/globals.css`) and `app/page.tsx`: the now-playing tile, a 24px gap, the carousel, and the calendar block when it has something to list.
+The right column is the now-playing tile, a 24px gap, and the carousel in the height that is left (`.side-slot` in `app/globals.css`, `app/page.tsx`). Under the chart and the carousel, across both, is the week's events band (`.events-band`, see "Upcoming events"), 290px tall while the calendar has an event that has not ended. While the calendar is not connected, still loading or empty, the band takes no space and the chart and the carousel have the whole height. The change eases over about half a second (`--bab-slow`); with reduced motion it is immediate.
 
-- **Carousel** (`PhotoCarousel` in `app/page.tsx`): a picture frame with a caption under it. Quotes and chumming photos share it; Spotbot photos are not in it (see "Spot alerts"). Quotes are the backbone, drawn at random from the deck in `app/Quotes.tsx`. A chumming photo (see "Chumming photos") is slipped in after every two or three quotes, two or three chosen at random each time (`chumGap`). The chumming photos come in shuffled order, all six before any comes back, and the same one never twice running; two never follow each other unless there are no quotes, in which case they cycle on their own. Each slide stays 8 seconds (`SLIDE_MS`) and crossfades to the next; there are no progress bars. The next slide is chosen a turn ahead and loaded hidden, and it does not go up until its picture has loaded; one still loading 6 seconds after its time (`SLIDE_LOAD_GRACE_MS`) is passed over. A new chumming photo does not jump the queue: it is the first one drawn at the next chumming turn. A chumming photo that fails to load drops out and is retried every 5 minutes; a quote whose picture fails is shown as its words, or skipped if it has none.
+- **Carousel** (`PhotoCarousel` in `app/page.tsx`): a picture frame with a caption under it. Quotes and chumming photos share it; Spotbot photos are not in it (see "Spot alerts"). Quotes are the backbone, drawn at random from the deck in `app/Quotes.tsx`. A chumming photo (see "Chumming photos") is slipped in after every two or three quotes, two or three chosen at random each time (`chumGap`).
 - **Caption height** is the same for every slide, so the frame never changes size between slides: all captions share one grid cell (as tall as the tallest of them), and while quotes are in the rotation the cell is at least 137px, the tallest a quote's caption can be. A chumming caption is never taller than 127px.
-- **Calendar** (`.events-slot`): 177px (the "Upcoming" label and two rows) plus the 24px gap, shown only while the calendar has an event that has not ended. While the calendar is not connected, still loading or empty, the block takes no space and the carousel has the whole height. The change eases over about half a second (`--bab-slow`); with reduced motion it is immediate.
-- **Jam QR**: for its minute the tile is 300px instead of 120px. The calendar steps aside for that minute and comes back after, so the picture stays about the size it was; with no calendar showing, the frame gives up the 180px.
+- **Jam QR**: for its minute the tile is 300px instead of 120px, and the frame gives up the 180px.
 
-Frame heights. The quotes row without a calendar was measured on 2026-10-02 (606px, the same as before spots left the carousel); the others follow from the same layout, with the chumming-only rows assuming the tallest chumming caption, 127px:
+Heights, measured on 2026-10-05 with quotes in the rotation:
 
-| State | Tile | Frame | Caption | Calendar |
-| --- | --- | --- | --- | --- |
-| Chumming photos only | 120 | 616 | 127 | none |
-| Quotes | 120 | 606 | 137 | none |
-| Chumming photos and calendar | 120 | 415 | 127 | 177 |
-| Quotes and calendar | 120 | 405 | 137 | 177 |
-| Jam QR up, no calendar | 300 | 426 | 137 | none |
-| Jam QR up, quotes (calendar hidden for the minute) | 300 | 426 | 137 | hidden |
+| State | Tile | Frame | Caption | Chart slot | Events band |
+| --- | --- | --- | --- | --- | --- |
+| No events this week | 120 | 595 | 137 | 890 | none |
+| Events this week | 120 | 263 | 137 | 558 | 290 |
+
+All ledger rules, and the frame, sit in the middle of 42px of space (`--rule-gap`), so every block has 21px on each side of the rule next to it.
 
 ## Market data
 
@@ -105,11 +102,13 @@ Mention the Slack bot in the songs channel with one of these words:
 
 | Command | What it does |
 | --- | --- |
-| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and the calendar (the chart takes the whole stage when there are no events). Spotify on this Mac is paused if it was playing. |
+| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and, across the whole width under it, the week's events (the chart takes the whole stage when there are none). Spotify on this Mac is paused if it was playing. |
 | `@spotbot-reader unfocus` (or `focus off`) | Back to the full screen. The music starts again if focus mode paused it. |
 | `@spotbot-reader pause` (or `stop`) | Pauses Spotify. |
 | `@spotbot-reader play` (or `resume`) | Starts Spotify again. |
 | `@spotbot-reader jam` | Shows the Jam QR for a minute (see "Jam QR"). |
+| `@spotbot-reader spotlight <link> <who>` | Puts a story about the club or someone in it in the feed column's spotlight for three days (see "Club in the news"). `<who>` is optional, e.g. `Nicholas Chua`. |
+| `@spotbot-reader spotlight off` | Takes every shared story down again. |
 
 Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause or play said during focus mode wins: unfocus then leaves the music as it is. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands are read by the same 20-second poll as song requests (so `/api/songs/sync` must have been opened since the server started), and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
 
@@ -173,7 +172,7 @@ The response's `sources` array shows, for every source, whether the last fetch w
 
 ## Newsworthy tokens
 
-`GET /api/newsworthy` returns up to six tokens that are in the news right now, each with a one- or two-sentence note and the outlets it is drawn from. The page (`MarketsProvider` in `app/Markets.tsx`) reads it every minute, adds the tokens to the tape and works them into the featured rotation. While one of them is featured, the feed column fades to its note (name, ticker, the note, "Reported by ...", and the label "AI summary"); when it leaves, the feed fades back and carries on scrolling from where it stopped. The set tokens never get a note: BTC, ETH and SOL are in the news every day and would crowd the feed out, and their stories are in the feed anyway.
+`GET /api/newsworthy` returns at most three tokens with major news right now (often none), each with a one- or two-sentence note and the outlets it is drawn from. The page (`MarketsProvider` in `app/Markets.tsx`) reads it every minute, adds the tokens to the tape and works them into the featured rotation. While one of them is featured, the feed column fades to its note: a one-line heading ("Arbitrum in the news"), the note, and a line naming the outlets it is an AI summary of. The featured header beside it already shows the name and ticker large, so the note does not repeat them. The note is set at the largest of four sizes at which it fits the column, which shrinks while recent spots and the coin flip tile are showing; below the smallest, the note is cut to the lines that fit, and nothing spills into the tiles underneath. When the token leaves, the feed fades back and carries on scrolling from where it stopped. The set tokens never get a note: BTC, ETH and SOL are in the news every day and would crowd the feed out, and their stories are in the feed anyway.
 
 How the list is made (`lib/newsworthy.ts`), in the background as part of the feed's refresh and never inside a request:
 
@@ -185,15 +184,27 @@ How the list is made (`lib/newsworthy.ts`), in the background as part of the fee
 What the model writes is shown on a public screen, and it writes after reading untrusted headlines, so this is a weaker guarantee than the feed's "numbers only". What is checked before a note is shown:
 
 - The ticker must be in the fixed list (the JSON schema makes it an enum, and it is looked up again). The name, venue and market shown come from that list, not from the model.
-- The candidate numbers it cites must exist, and a candidate counts only if its own text names the token. A note with no such candidate is dropped. The outlets shown are those candidates' sources.
+- The candidate numbers it cites must exist, and a candidate counts only if its own text names the token. The story must come from at least two outlets (`MIN_OUTLETS`), so one outlet's write-up of a governance proposal or a rate change is never a note. The outlets shown are those candidates' sources.
+- The prompt sets a high bar: hacks and outages, court and regulatory decisions, launches and upgrades that change how a network works, major exchange listings, and deals worth hundreds of millions. Routine governance votes, parameter and rate changes, integrations, partnerships and product updates are named as not qualifying.
 - The note is reduced to plain text in Latin script. A sentence is removed if it contains a link, a web address, an @handle or a hashtag, if it trips the feed's filters for adverts, price calls, crude language or text addressed to a model, or if it contains a figure that is not in the cited candidates. What is left is capped at 260 characters in whole sentences; under 40 characters the token is dropped.
 - The page renders the note as text. It is never a link or markup.
 
 What these checks cannot do: they cannot tell whether a sentence is true. A model can still misread its sources, state something the headlines only imply, or be steered by a misleading or planted article from one of the RSS outlets into writing a false or slanted sentence in plain words. The note is labelled "AI summary" and names its outlets for that reason. `.data/newsworthy.json` records which model wrote the current list and which entries were dropped and why.
 
+## Club in the news
+
+Between token notes, a story about the club or someone in it takes the feed column for 20 seconds every 90 seconds, in turn with any others (`app/ClubNote.tsx`). It is headed by the B@B mark and who it is about ("Ayush Paul in the news", or "B@B in the news"), with the article's picture when the column has room for it, the headline and opening lines, and the publisher. Nothing in it is written by a model.
+
+Stories come in two ways (`lib/club-news.ts`, served by `GET /api/club-news`):
+
+- **Found in the news.** After each feed refresh, every new article from the RSS outlets is read once, page and all, and kept when it names someone in the club's Slack workspace and mentions Berkeley, or names the club. Names often appear only in the body or a photo caption: the Daily Cal's story on the Snackpass leaderboard names Ayush Paul only in a caption. The names come from Slack's `users.list` (`lib/club-roster.ts`, every 12 hours, deactivated accounts included so alumni count; full names of two or more words only). A Google News search for "Blockchain at Berkeley" adds coverage from outlets the feed does not follow. A found story stays up for 7 days from publication.
+- **Shared in Slack.** `@spotbot-reader spotlight <link> <who>` in the songs channel, for stories that never name the person, like a co-founder's launch post. Web pages are read from their preview tags; posts on X through FxTwitter's public API (`api.fxtwitter.com`), since X gives nothing without an account. A shared story stays up for 3 days, credited to whoever shared it; `@spotbot-reader spotlight off` takes shared stories down.
+
+Up to 30 new articles are read per refresh, 4 at a time, and what was found is kept in `.data/club-news.json`, so an article is never read twice.
+
 ## Upcoming events
 
-`app/Events.tsx` lists the next events of the club's Google Calendar under the carousel in the right column, two at a time: title, day and time, and the location when it is short. An event in progress reads "Now", in gold. `GET /api/events` answers from memory; the calendar is downloaded in the background at most every 10 minutes while a screen is asking, and the page asks every 5 minutes and keeps its own clock, so an event turns to "Now" or drops off on time without a fetch. If a download fails the last good list stays up, for at most 24 hours.
+`app/Events.tsx` draws the club's Google Calendar along the bottom of the screen as a wall calendar: seven columns from today, each headed by its date, listing that day's events with the time, the place and the title. Today's column is shaded, a day with nothing on it is dimmed, and each event has a rule down its left side, white for the next one and gold for one under way ("Until 9 PM"). All-day and multi-day events are bars across the top of the days they cover. A day with more events than fit shows as many as fit whole and says how many more. In focus mode the band runs the whole width of the screen. `GET /api/events` answers from memory; the calendar is downloaded in the background at most every 10 minutes while a screen is asking, and the page asks every 5 minutes and keeps its own clock, so an event turns to "Now" or drops off on time without a fetch. If a download fails the last good list stays up, for at most 24 hours.
 
 The source is the calendar's iCalendar (.ics) feed, so no API key or Google Cloud project is needed:
 
@@ -202,7 +213,7 @@ The source is the calendar's iCalendar (.ics) feed, so no API key or Google Clou
 
 Until one of the two works there is no calendar block on the screen at all (the carousel keeps the full height) and `/api/events` says why in `message`; the same goes for a connected calendar with nothing coming up. The block appears by itself with the first answer that has an event (the page asks every 5 seconds until the calendar answers, then every 5 minutes) and leaves when the last one ends. Used on its own, without the `quietWhenEmpty` prop the page passes, `<Events />` says "Calendar not connected" or "No upcoming events" instead. Google can take several hours to show a change in either feed.
 
-What is shown: events that have not ended, soonest first, starting within 28 days, at most 12 from the API (the block shows as many whole rows as its height allows: two at the 177px the page gives it). Recurring events are expanded (`RRULE`, `EXDATE`, moved or cancelled instances), cancelled events are left out, and so is anything longer than 14 days. Times are always shown in `America/Los_Angeles`, whatever the server's or the browser's timezone. Parsing is done with `ical.js`; turning a time in a named zone into an instant uses the machine's own timezone database (`lib/events.ts`). An event whose timezone name is not an IANA name is left out rather than guessed. Only the title and location reach the page, as plain text; descriptions, guests and links never leave the server.
+What is shown: events that have not ended and start within the next 7 days, from the API's list of at most 12 starting within 28 days. Recurring events are expanded (`RRULE`, `EXDATE`, moved or cancelled instances), cancelled events are left out, and so is anything longer than 14 days. Times are always shown in `America/Los_Angeles`, whatever the server's or the browser's timezone. Parsing is done with `ical.js`; turning a time in a named zone into an instant uses the machine's own timezone database (`lib/events.ts`). An event whose timezone name is not an IANA name is left out rather than guessed. Only the title and location reach the page, as plain text; descriptions, guests and links never leave the server.
 
 ## Coin flip
 
@@ -232,6 +243,14 @@ Sound is played on this Mac by the server (`lib/coin-flip-sound.ts`, with `afpla
 `app/SpotAlert.tsx` asks `/api/spot` every 30 seconds. A spot that was not in the previous answer takes over the whole screen for 12 seconds (`TAKEOVER_MS`) once its photo has loaded (or after 6 seconds without it): the photo, the people spotted, the message with their @mentions taken out, and who spotted them, with a gold bar along the bottom counting the seconds down. Spots that were already there when the page loaded never take over. The takeover is fixed inside the 1920x1080 stage, like the coin flip.
 
 Afterwards the spot is listed under the news feed with the others from the last hour (`RECENT_SPOT_MS`): up to three, newest first, text only (who was spotted, who spotted them, how long ago). A spot from the last 10 minutes has a pulsing gold marker. With no spot in the last hour the list takes no space and the feed has the column.
+
+## Edge glow
+
+Along the bottom edge of the screen, light rises and falls with whatever this Mac is playing, the way Siri's glow runs around an iPhone's edges (`app/EdgeGlow.tsx`). The bass is in the middle and the treble towards the corners, mirrored, and the light rises a little way up both sides. Its colours are the background ribbons' for the time of day, and they drift slowly along the edge. Each band is scaled against its own recent peak (`app/edge-glow-levels.ts`), so a quiet song moves it as much as a loud one. After 15 seconds of silence it fades out.
+
+Spotify's Web API stopped giving apps audio analysis in November 2024, so the sound is read off the Mac's own output instead. `scripts/audio-levels/AudioLevels.swift` opens a Core Audio process tap: a private, unmuted copy of everything the Mac plays, which changes nothing anyone hears. It prints the overall loudness and 32 bands in dB, 30 times a second. `lib/audio-levels.ts` compiles it into `.data/audio-levels` with `swiftc` the first time a page asks (the Xcode command line tools must be installed), runs it while at least one page is listening, and restarts it if it stops. `GET /api/audio-levels` streams its lines to the page as server-sent events.
+
+It needs macOS 14.2 or later. The first time it runs, macOS asks to allow "System Audio Recording" for the app that started the server (Terminal, or the binary itself under launchd); allow it in System Settings > Privacy & Security > Screen & System Audio Recording. Until it is allowed the tap hears silence and no glow shows. Set `AUDIO_LEVELS=off` to turn it off; on other systems it is off already. With reduced motion nothing is drawn.
 
 ## Background waves
 

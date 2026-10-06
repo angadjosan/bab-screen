@@ -1,8 +1,8 @@
 /*
- * Upcoming events (app/Events.tsx). The block fills whatever box it is given; Events.tsx counts how many
- * whole rows fit and sets each row's height, so ROW_MIN_PX (72), RULE_PX (1) and HEADER_PX (32) there must
- * match the numbers here: a row's content is 26 + 2 + 34 = 62px, the header is 26 + 5 + 1.
- * Colours and faces are the page's own (--ink, --muted, --faint, --line, --mono, --sans in globals.css).
+ * The week's events (app/Events.tsx) as a wall calendar: seven columns from today, each headed by its date, with
+ * bars for events that run across days, then each day's events. Colours and faces are the page's own (--ink,
+ * --muted, --faint, --line, --sans in globals.css); gold is the brand's live signal, so it marks only what is
+ * under way now.
  */
 
 .events {
@@ -13,111 +13,192 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  animation: events-in var(--bab-slow) linear;
 }
 
-.header {
-  flex: none;
-  height: 32px;
-  border-bottom: 1px solid var(--line);
-  color: var(--faint);
-  font: 400 20px/26px var(--mono);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-/* Each page of events fades in as it takes its turn (Events.tsx remounts the list per page). */
-.list {
-  flex: none;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  animation: page-in var(--bab-slow) linear;
-}
-
-@keyframes page-in {
+@keyframes events-in {
   from {
     opacity: 0;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .list {
-    animation: none;
-  }
+.board {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
-/* content-box: the hairline between rows is counted on top of the height Events.tsx sets. */
-.row {
-  box-sizing: content-box;
+/* --- Each day's date ------------------------------------------------------------------------------------------ */
+
+.dayHead {
+  grid-row: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 14px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.date {
+  font: 600 32px/36px var(--sans);
+}
+
+.weekday {
+  color: var(--muted);
+  font: 400 22px/26px var(--sans);
+}
+
+/* A day with nothing on it steps back, so the busy days are what the eye lands on. */
+.quiet .date,
+.quiet .weekday {
+  color: var(--faint);
+}
+
+/* Today's column is a shade lighter from its date to the bottom. */
+.dayHead.today,
+.dayBody.today {
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.dayHead.today {
+  padding-top: 8px;
+}
+
+/* --- Events across several days ------------------------------------------------------------------------------ */
+
+.lanes {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  row-gap: 6px;
+  padding-bottom: 10px;
+}
+
+.lane {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  margin: 0 6px;
+  padding: 2px 10px;
+  background: color-mix(in oklab, var(--ink) 16%, transparent);
+  font: 500 22px/28px var(--sans);
+  white-space: nowrap;
+}
+
+.lane.next {
+  background: color-mix(in oklab, var(--ink) 26%, transparent);
+}
+
+.laneTitle {
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.laneTime {
+  flex: none;
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Each day's events --------------------------------------------------------------------------------------- */
+
+.dayBody {
+  grid-row: 3;
+  min-height: 0;
+  padding: 4px 14px 0;
+}
+
+.dayBody + .dayBody,
+.dayHead + .dayHead {
+  border-left: var(--bab-hair) solid var(--line);
+}
+
+/* Positioned, so each event's offsetTop is measured from here (useDayFit in Events.tsx). */
+.dayEvents {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: 14px;
 }
 
-.row + .row {
-  border-top: 1px solid var(--line);
-}
-
-.meta {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
+/* A rule down the left of every event; the next one's is white and one under way has gold. */
+.item {
   min-width: 0;
-  white-space: nowrap;
+  padding-left: 12px;
+  border-left: 3px solid var(--line-strong);
 }
 
-/* When: the one thing that has to be read from across the room, so it never gives way to the location. */
-.when {
-  flex: none;
+.item.next {
+  border-left-color: var(--ink);
+}
+
+.item.live {
+  border-left-color: var(--bab-gold);
+}
+
+.itemMeta {
   display: flex;
   align-items: baseline;
+  gap: 10px;
+  min-width: 0;
   color: var(--muted);
-  font: 400 20px/26px var(--mono);
-  font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
-}
-
-.day::after {
-  content: "\00b7";
-  margin: 0 9px;
-  color: var(--faint);
-}
-
-.place {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--faint);
-  font: 400 20px/26px var(--sans);
-}
-
-.title {
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font: 400 20px/24px var(--sans);
   white-space: nowrap;
-  font: 500 28px/34px var(--sans);
 }
 
-/* Happening now is a live signal, so it gets the gold: the word and a square pip, nothing else. */
-.isLive .day {
+.itemTime {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.live .itemTime {
   color: var(--bab-gold);
 }
 
-.pip {
-  flex: none;
-  align-self: center;
-  width: 9px;
-  height: 9px;
-  margin-right: 10px;
-  background: var(--bab-gold);
+.itemPlace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
 }
 
-/* Nothing to list: the same quiet box as the column's other empty states. */
+.itemTitle {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+  font: 500 24px/29px var(--sans);
+}
+
+/* Height must match MORE_LINE_PX in Events.tsx. */
+.more {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  color: var(--muted);
+  font: 400 20px/30px var(--sans);
+}
+
+/* --- Nothing to list ----------------------------------------------------------------------------------------- */
+
 .isEmpty {
   align-items: center;
   justify-content: center;
@@ -131,4 +212,10 @@
   line-height: 1.3;
   text-align: center;
   text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .events {
+    animation: none;
+  }
 }

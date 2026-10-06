@@ -6,18 +6,24 @@
 //   @bot unfocus  back to the full screen (also "focus off"); the music starts again if focus mode paused it.
 //   @bot pause    pauses Spotify (also "stop").
 //   @bot play     starts Spotify again (also "resume").
+//   @bot spotlight <link> <who>
+//                 puts a story about the club or someone in it in the feed column's spotlight for three days
+//                 (lib/club-news.ts); "who" is optional, e.g. "Nicholas Chua". "@bot spotlight off" takes every
+//                 shared story down again.
 //
 // Focus mode is kept in .data/focus.json so it survives a restart; the page reads it from /api/focus. A pause or
 // play said during focus mode is what counts: unfocus then leaves the music as it is.
 
 import { execFile } from "node:child_process";
+import { clearShared, shareStory } from "./club-news";
 import { readJson, writeJson } from "./songs-store";
 
 const STATE_FILE = "focus.json";
 const SLACK_USER_ID = /^[UW][A-Z0-9]{2,}$/;
 const OFF_WORDS = /\b(off|stop|end|done|exit)\b/i;
 
-export type Command = "focus" | "unfocus" | "pause" | "play";
+export type Spotlight = { kind: "spotlight"; url: string; about: string | null };
+export type Command = "focus" | "unfocus" | "pause" | "play" | "spotlight-off" | Spotlight;
 
 type FocusState = {
   version: 1;
@@ -38,7 +44,21 @@ function words(text: string): string {
 
 /** Cheap first look that needs no bot ID: someone is mentioned and one of the command words is there. */
 export function looksLikeCommand(text: string | undefined): boolean {
-  return typeof text === "string" && text.includes("<@") && /\b(un)?focus\b|\b(pause|stop|play|resume)\b/i.test(words(text));
+  return typeof text === "string" && text.includes("<@") && /\b(un)?focus\b|\b(pause|stop|play|resume|spotlight)\b/i.test(words(text));
+}
+
+/** The first web link in a Slack message, which Slack writes as <https://…> or <https://…|label>. */
+function firstLink(text: string): string | null {
+  const match = /<(https?:\/\/[^|>\s]+)(?:\|[^>]*)?>/.exec(text);
+  return match ? match[1] : null;
+}
+
+/** "@bot spotlight <link> <who>" shares the link; "@bot spotlight off" with no link takes shared stories down. */
+function spotlightCommand(text: string, said: string): Command | null {
+  const url = firstLink(text);
+  if (!url) return OFF_WORDS.test(said) ? "spotlight-off" : null;
+  const about = said.replace(/\bspotlight\b/i, " ").replace(/\s+/g, " ").trim();
+  return { kind: "spotlight", url, about: about || null };
 }
 
 /**
@@ -50,8 +70,17 @@ export function parseCommand(text: string | undefined, botUserId: string | null)
   if (typeof text !== "string" || !botUserId || !SLACK_USER_ID.test(botUserId)) return null;
   if (!new RegExp(`<@${botUserId}(?:\\|[^<>]*)?>`).test(text)) return null;
   const said = words(text);
+  if (/\bspotlight\b/i.test(said)) return spotlightCommand(text, said);
+  return focusCommand(said) ?? playbackCommand(said);
+}
+
+function focusCommand(said: string): Command | null {
   if (/\bunfocus\b/i.test(said)) return "unfocus";
   if (/\bfocus\b/i.test(said)) return OFF_WORDS.test(said) ? "unfocus" : "focus";
+  return null;
+}
+
+function playbackCommand(said: string): Command | null {
   if (/\b(pause|stop)\b/i.test(said)) return "pause";
   if (/\b(play|resume)\b/i.test(said)) return "play";
   return null;
@@ -76,34 +105,44 @@ async function loadState(): Promise<FocusState> {
   };
 }
 
+async function runSpotlight(command: Spotlight | "spotlight-off", user: string | null): Promise<void> {
+  if (command === "spotlight-off") return clearShared();
+  if (!(await shareStory(command.url, command.about, user))) console.warn(`Spotlight: nothing could be read from ${command.url}`);
+}
+
+async function runPlayback(command: "pause" | "play"): Promise<void> {
+  const state = await loadState();
+  await spotify(command);
+  // Said by a person, so unfocus must not undo it.
+  if (!state.pausedMusic) return;
+  state.pausedMusic = false;
+  await writeJson(STATE_FILE, state, 0o600);
+}
+
+async function runFocus(on: boolean, user: string | null): Promise<void> {
+  const state = await loadState();
+  if (state.on === on) return;
+  state.on = on;
+  state.changedAt = new Date().toISOString();
+  state.changedBy = user;
+  if (on) {
+    state.pausedMusic = (await spotify("get player state as string")) === "playing";
+    if (state.pausedMusic) await spotify("pause");
+  } else {
+    if (state.pausedMusic) await spotify("play");
+    state.pausedMusic = false;
+  }
+  await writeJson(STATE_FILE, state, 0o600);
+}
+
 /** Carries out a command. Focus or unfocus while already in that mode does nothing. Never throws. */
 export async function runCommand(command: Command, user: string | null): Promise<void> {
   try {
-    const state = await loadState();
-    if (command === "pause" || command === "play") {
-      await spotify(command);
-      // Said by a person, so unfocus must not undo it.
-      if (state.pausedMusic) {
-        state.pausedMusic = false;
-        await writeJson(STATE_FILE, state, 0o600);
-      }
-      return;
-    }
-    const on = command === "focus";
-    if (state.on === on) return;
-    state.on = on;
-    state.changedAt = new Date().toISOString();
-    state.changedBy = user;
-    if (on) {
-      state.pausedMusic = (await spotify("get player state as string")) === "playing";
-      if (state.pausedMusic) await spotify("pause");
-    } else {
-      if (state.pausedMusic) await spotify("play");
-      state.pausedMusic = false;
-    }
-    await writeJson(STATE_FILE, state, 0o600);
+    if (typeof command === "object" || command === "spotlight-off") return await runSpotlight(command, user);
+    if (command === "pause" || command === "play") return await runPlayback(command);
+    await runFocus(command === "focus", user);
   } catch (error) {
-    console.error(`Bot command "${command}" failed:`, error instanceof Error ? error.message : String(error));
+    console.error(`Bot command "${typeof command === "object" ? command.kind : command}" failed:`, error instanceof Error ? error.message : String(error));
   }
 }
 
