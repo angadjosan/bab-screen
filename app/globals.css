@@ -363,8 +363,8 @@ p {
    the height that is left, and under it the club calendar while it has events to list. */
 .side-slot {
   --side-gap: 24px;
-  /* Label, rule and two 72px rows with a rule between them (app/Events.tsx): 32 + 72 + 1 + 72. */
-  --events-height: 177px;
+  /* The next event in words (66px), then the week strip (app/Events.tsx). */
+  --events-height: 200px;
   grid-column: 3;
   grid-row: 2;
   min-width: 0;

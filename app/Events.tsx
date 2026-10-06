@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CalendarEvent, EventsResponse } from "../lib/events";
+import { buildWeek, DAY_MS, formatsFor, groupByDay, isLive, safeZone, timeLabel, WEEK_DAYS, whenLabel, type Formats, type Week } from "./event-week";
 import styles from "./Events.module.css";
 
 const POLL_MS = 5 * 60_000;
@@ -10,127 +11,41 @@ const UNSETTLED_POLL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 /** The clock is re-read at the next start or end, and at least this often (midnight, a machine waking from sleep). */
 const MAX_TICK_MS = 30_000;
-const DAY_MS = 86_400_000;
-/** Only the week ahead is listed: an event has to start within this long from now (or be under way). */
-const WEEK_AHEAD_MS = 7 * DAY_MS;
-/** With more events than rows, each page of them is held this long before the next takes its place. */
-const PAGE_HOLD_MS = 10_000;
-const DEFAULT_ZONE = "America/Los_Angeles";
+/** Only the week ahead is shown: an event has to start within this long from now (or be under way). */
+const WEEK_AHEAD_MS = WEEK_DAYS * DAY_MS;
 
-// These four must match Events.module.css: the row count is worked out from them, so no row is ever cut off.
-const ROW_MIN_PX = 72;
-const ROW_MAX_PX = 92;
-const RULE_PX = 1;
-const HEADER_PX = 32;
+const cx = (...names: Array<string | false | null | undefined>) => names.filter(Boolean).join(" ");
 
 /** What a parent needs to decide whether the block earns its space. */
 export type EventsState = {
   /** "loading" until the first answer, then the API's status. */
   status: EventsResponse["status"];
-  /** Events in the week ahead that have not ended, i.e. how many rows there are to show (a page at a time if the height allows fewer). */
+  /** Events in the week ahead that have not ended. */
   count: number;
 };
 
 type Props = {
-  /** Mono label above the list, shown only when it costs no row. null: never. */
-  label?: string | null;
-  /** Upper limit on rows; the height decides below that. */
-  maxRows?: number;
+  /**
+   * compact: the next event in words over the week drawn as seven tracks (the side column's short slot).
+   * full: the week's tracks over every event, grouped by day, as many as fit (focus mode's whole column).
+   */
+  layout?: "compact" | "full";
   /** A fixed list instead of polling /api/events (previews, tests). */
   events?: CalendarEvent[];
   /** Called when the status or the number of events changes, so a parent can hide the block while it is empty. */
   onState?: (state: EventsState) => void;
   /**
    * For a parent that hides the block while there is nothing to list: no note and no box, and when the
-   * last event ends its row stays where it was, so the block can be faded out rather than blanked.
+   * last event ends it stays drawn as it was, so the block can be faded out rather than blanked.
    */
   quietWhenEmpty?: boolean;
-  /** false: never page. Only the rows that fit are shown, soonest first, and the rest wait their turn off screen. */
-  rotate?: boolean;
 };
 
-type Formats = {
-  dayNumber: (ms: number) => number;
-  time: (ms: number) => string;
-  weekday: (day: number) => string;
-  date: (day: number) => string;
-};
-
-/** Everything is formatted in the calendar's zone, never the browser's. */
-function formatsFor(zone: string): Formats {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric", month: "numeric", day: "numeric" });
-  const clock = new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric", minute: "2-digit" });
-  // Day numbers are formatted from UTC midnight of that day, so these two are zone-free.
-  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" });
-  const date = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
-  return {
-    dayNumber: (ms) => {
-      const found: Record<string, number> = {};
-      for (const part of parts.formatToParts(new Date(ms))) found[part.type] = Number(part.value);
-      return Math.round(Date.UTC(found.year, found.month - 1, found.day) / DAY_MS);
-    },
-    // Newer ICU puts a narrow no-break space before AM/PM, which DM Mono has no glyph for.
-    time: (ms) => clock.format(new Date(ms)).replace(/\s+/g, " "),
-    weekday: (day) => weekday.format(new Date(day * DAY_MS)),
-    date: (day) => date.format(new Date(day * DAY_MS)),
-  };
-}
-
-function safeZone(zone: string | undefined): string {
-  if (!zone) return DEFAULT_ZONE;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone });
-    return zone;
-  } catch {
-    return DEFAULT_ZONE;
-  }
-}
-
-const dayOfKey = (key: string | null): number | null => {
-  const match = key ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(key) : null;
-  return match ? Math.round(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / DAY_MS) : null;
-};
-
-function dayLabel(day: number, today: number, formats: Formats): string {
-  const ahead = day - today;
-  if (ahead === 0) return "Today";
-  if (ahead === 1) return "Tomorrow";
-  if (ahead >= 2 && ahead <= 6) return formats.weekday(day);
-  return formats.date(day);
-}
-
-type When = { live: boolean; day: string; detail: string };
-
-function describe(event: CalendarEvent, now: number, formats: Formats): When {
-  const today = formats.dayNumber(now);
-  const start = Date.parse(event.start);
-  const end = Date.parse(event.end);
-  if (event.allDay) {
-    const first = dayOfKey(event.startDate) ?? formats.dayNumber(start);
-    const last = Math.max(first, dayOfKey(event.endDate) ?? first);
-    const from = Math.max(first, today);
-    return { live: false, day: dayLabel(from, today, formats), detail: last > from ? `Through ${dayLabel(last, today, formats)}` : "All day" };
-  }
-  if (start <= now) {
-    const endDay = formats.dayNumber(end);
-    // "Until 1:00 AM" needs no day; an end further off does.
-    const sameNight = endDay === today || end - now < 12 * 3_600_000;
-    return { live: true, day: "Now", detail: `Until ${sameNight ? "" : `${dayLabel(endDay, today, formats)} `}${formats.time(end)}` };
-  }
-  return { live: false, day: dayLabel(formats.dayNumber(start), today, formats), detail: formats.time(start) };
-}
-
-/**
- * The week ahead from the club calendar. Fills its container (give it a width and a height) and shows
- * as many whole rows as fit: nothing is ever cut off or scrolled. More events than rows are shown a
- * page at a time, in turn (unless `rotate` is false).
- */
-export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState, quietWhenEmpty = false, rotate = true }: Props) {
+/** /api/events, polled, with the server's clock: a screen with a wrong clock still flips events on time. */
+function useCalendar(fixed: CalendarEvent[] | undefined) {
   const [data, setData] = useState<EventsResponse | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [height, setHeight] = useState(0);
-  const root = useRef<HTMLElement>(null);
-  // Server clock minus this page's clock, so a screen with a wrong clock still flips events on time.
+  // Server clock minus this page's clock.
   const skew = useRef(0);
 
   useEffect(() => {
@@ -170,8 +85,7 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
     };
   }, [fixed]);
 
-  const zone = useMemo(() => safeZone(data?.timeZone), [data?.timeZone]);
-  const formats = useMemo(() => formatsFor(zone), [zone]);
+  const formats = useMemo(() => formatsFor(safeZone(data?.timeZone)), [data?.timeZone]);
 
   // Soonest first; anything that has ended, or starts more than a week out, is not there as of this render's `now`.
   const list = useMemo(() => {
@@ -181,24 +95,7 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
       .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   }, [fixed, data, now]);
 
-  const status: EventsResponse["status"] = fixed ? "ok" : data?.status ?? "loading";
-  const count = list.length;
-  const report = useRef(onState);
-  useEffect(() => {
-    report.current = onState;
-  });
-  useEffect(() => {
-    report.current?.({ status, count });
-  }, [status, count]);
-
-  // The last list that had anything in it: what a quiet block keeps showing while its parent fades it out.
-  const [held, setHeld] = useState<CalendarEvent[]>([]);
-  useEffect(() => {
-    if (list.length) setHeld(list);
-  }, [list]);
-  const shown = list.length || !quietWhenEmpty ? list : held;
-
-  // Own clock: wake at the next start or end among the listed events, so a row turns to "Now" or leaves on time.
+  // Own clock: wake at the next start or end among the events, so one turns live or leaves on time.
   useEffect(() => {
     let next = now + MAX_TICK_MS;
     for (const event of list) {
@@ -208,66 +105,182 @@ export function Events({ label = "Upcoming", maxRows = 6, events: fixed, onState
     return () => window.clearTimeout(timer);
   }, [now, list]);
 
-  // Layout pixels of the stage, not screen pixels: the page's scale transform does not affect this.
+  const status: EventsResponse["status"] = fixed ? "ok" : data?.status ?? "loading";
+  return { status, list, now, formats };
+}
+
+/** The live event if one is under way, otherwise the soonest timed event, otherwise the soonest of any kind. */
+function pickNext(list: readonly CalendarEvent[], now: number): CalendarEvent | null {
+  return list.find((event) => isLive(event, now)) ?? list.find((event) => !event.allDay) ?? list[0] ?? null;
+}
+
+/**
+ * The week as seven tracks, today first. Each track runs down through the hours the week's events fall in, so a
+ * late meeting sits low and an early one high; the next event is lit, one under way is gold, and the part of
+ * today that has passed is shaded. All-day and multi-day events are bars across the top of the days they cover.
+ */
+function WeekStrip({ week, formats, today }: { week: Week; formats: Formats; today: number }) {
+  return (
+    <div className={styles.week} style={{ "--rule-every": `${week.ruleEvery * 100}%` } as CSSProperties} aria-hidden="true">
+      {week.days.map(({ day, busy }, column) => (
+        <div key={day} className={cx(styles.dayHead, busy && styles.busy, day === today && styles.today)} style={{ gridColumn: column + 1 }}>
+          <span className={styles.weekday}>{formats.shortWeekday(day)}</span>
+          <span className={styles.date}>{formats.dayOfMonth(day)}</span>
+        </div>
+      ))}
+      {week.spans.length > 0 && (
+        <div className={styles.lane}>
+          {week.spans.map((span) => (
+            <span key={span.id} className={cx(styles.span, span.next && styles.next)} style={{ gridColumn: `${span.from + 1} / ${span.to + 2}` }} />
+          ))}
+        </div>
+      )}
+      {week.days.map(({ day, blocks }, column) => (
+        <div key={day} className={styles.track} style={{ gridColumn: column + 1 }}>
+          {column === 0 && <span className={styles.past} style={{ height: `${week.nowAt * 100}%` }} />}
+          {blocks.map((block) => (
+            <span
+              key={block.id}
+              className={cx(styles.block, block.next && styles.next, block.live && styles.live)}
+              style={{ top: `${block.top * 100}%`, height: `${block.height * 100}%` }}
+            />
+          ))}
+          {column === 0 && <span className={styles.now} style={{ top: `${week.nowAt * 100}%` }} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The next event in words: when, where and what. */
+function NextUp({ event, now, formats }: { event: CalendarEvent; now: number; formats: Formats }) {
+  const live = isLive(event, now);
+  return (
+    <div className={cx(styles.nextUp, live && styles.isLive)}>
+      <p className={styles.nextWhen}>
+        <time dateTime={event.start}>{live && <span className={styles.pip} aria-hidden="true" />}{whenLabel(event, now, formats)}</time>
+        {event.location && <span className={styles.place}>{event.location}</span>}
+      </p>
+      <p className={styles.nextTitle}>{event.title}</p>
+    </div>
+  );
+}
+
+/** How many events, in order, fit whole in the agenda's box. */
+function useFitCount(box: React.RefObject<HTMLElement | null>, total: number) {
+  const [fit, setFit] = useState(total);
   useLayoutEffect(() => {
-    const element = root.current;
+    const element = box.current;
     if (!element) return;
-    const measure = () => setHeight(element.clientHeight);
+    const measure = () => {
+      const rows = [...element.querySelectorAll<HTMLElement>("[data-event]")];
+      const room = element.clientHeight;
+      const fitting = rows.findIndex((row) => row.offsetTop + row.offsetHeight > room);
+      setFit(fitting < 0 ? rows.length : fitting);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [box, total]);
+  return fit;
+}
 
-  const fit = Math.floor((height + RULE_PX) / (ROW_MIN_PX + RULE_PX));
-  const rows = Math.min(fit, Math.max(1, maxRows), shown.length);
-  const showLabel = label !== null && label !== "" && rows > 0 && HEADER_PX + rows * ROW_MIN_PX + (rows - 1) * RULE_PX <= height;
-  const rowHeight = rows > 0 ? Math.min(ROW_MAX_PX, Math.floor((height - (showLabel ? HEADER_PX : 0) - (rows - 1) * RULE_PX) / rows)) : 0;
+/**
+ * The week's events under their day: the date once, large, beside every event that day. Events that do not fit
+ * whole are hidden rather than cut, and so is a day whose events are all hidden.
+ */
+function Agenda({ events, now, formats }: { events: readonly CalendarEvent[]; now: number; formats: Formats }) {
+  const box = useRef<HTMLOListElement>(null);
+  const fit = useFitCount(box, events.length);
+  const today = formats.dayNumber(now);
+  let index = 0;
+  return (
+    <ol ref={box} className={styles.agenda}>
+      {groupByDay(events, now, formats).map((group) => {
+        const firstIndex = index;
+        index += group.events.length;
+        return (
+          <li key={group.day} className={styles.dayGroup} style={firstIndex >= fit ? { visibility: "hidden" } : undefined}>
+            <p className={styles.dayMark}>
+              <span className={styles.dayNumber}>{formats.dayOfMonth(group.day)}</span>
+              <span className={styles.dayName}>{group.day === today ? "Today" : formats.shortWeekday(group.day)}</span>
+            </p>
+            <ol className={styles.dayEvents}>
+              {group.events.map((event, i) => {
+                const live = isLive(event, now);
+                return (
+                  <li key={event.id} data-event className={cx(styles.item, live && styles.isLive)} style={firstIndex + i >= fit ? { visibility: "hidden" } : undefined}>
+                    <time className={styles.itemTime} dateTime={event.start}>
+                      {live && <span className={styles.pip} aria-hidden="true" />}
+                      {timeLabel(event, now, formats)}
+                    </time>
+                    <div className={styles.itemBody}>
+                      <p className={styles.itemTitle}>{event.title}</p>
+                      {event.location && <p className={styles.itemPlace}>{event.location}</p>}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
-  // Pages are whole rows of one height; the last may be short, and leaves its space empty rather than stretch.
-  const pages = rows > 0 && rotate ? Math.ceil(shown.length / rows) : 1;
-  const [page, setPage] = useState(0);
-  // An event ending or the box changing can leave fewer pages than the one being shown: back to the first.
-  const current = page < pages ? page : 0;
-
+/** Calls the parent back when the status or the number of events changes. */
+function useReport(onState: Props["onState"], state: EventsState) {
+  const report = useRef(onState);
   useEffect(() => {
-    if (pages < 2) return;
-    const hold = window.setInterval(() => setPage((shownPage) => (shownPage + 1) % pages), PAGE_HOLD_MS);
-    return () => window.clearInterval(hold);
-  }, [pages]);
+    report.current = onState;
+  });
+  const { status, count } = state;
+  useEffect(() => {
+    report.current?.({ status, count });
+  }, [status, count]);
+}
 
-  if (!shown.length) {
-    const loading = !fixed && (data === null || data.status === "loading");
-    const note = loading || quietWhenEmpty ? "" : !fixed && data?.status === "error" ? "Calendar not connected" : "No upcoming events";
+/** The last list that had anything in it: what a quiet block keeps showing while its parent fades it out. */
+function useHeldList(list: CalendarEvent[], quietWhenEmpty: boolean) {
+  const [held, setHeld] = useState<CalendarEvent[]>([]);
+  useEffect(() => {
+    if (list.length) setHeld(list);
+  }, [list]);
+  return list.length || !quietWhenEmpty ? list : held;
+}
+
+function emptyNote(status: EventsResponse["status"], fixed: boolean, quietWhenEmpty: boolean) {
+  if (quietWhenEmpty || (!fixed && status === "loading")) return "";
+  return !fixed && status === "error" ? "Calendar not connected" : "No upcoming events";
+}
+
+/**
+ * The week ahead from the club calendar, drawn as a week of tracks (see WeekStrip) with the events in words beside
+ * it: the next one in the compact layout, all that fit in the full one. Fills its container.
+ */
+export function Events({ layout = "compact", events: fixed, onState, quietWhenEmpty = false }: Props) {
+  const { status, list, now, formats } = useCalendar(fixed);
+  useReport(onState, { status, count: list.length });
+  const shown = useHeldList(list, quietWhenEmpty);
+  const next = pickNext(shown, now);
+  const week = useMemo(() => buildWeek(shown, now, next?.id ?? null, formats), [shown, now, next, formats]);
+
+  if (!next) {
+    const note = emptyNote(status, fixed !== undefined, quietWhenEmpty);
     return (
-      <section ref={root} className={`${styles.events} ${quietWhenEmpty ? "" : styles.isEmpty}`} aria-label="Upcoming events">
+      <section className={cx(styles.events, !quietWhenEmpty && styles.isEmpty)} aria-label="Upcoming events">
         {note && <p className={styles.note}>{note}</p>}
       </section>
     );
   }
 
+  const strip = <WeekStrip week={week} formats={formats} today={formats.dayNumber(now)} />;
+  const full = layout === "full";
   return (
-    <section ref={root} className={styles.events} aria-label="Upcoming events">
-      {showLabel && <p className={styles.header}>{label}</p>}
-      {/* Keyed by page, so each page fades in as it takes its turn. */}
-      <ol key={current} className={styles.list}>
-        {shown.slice(current * rows, (current + 1) * rows).map((event) => {
-          const when = describe(event, now, formats);
-          return (
-            <li key={event.id} className={`${styles.row} ${when.live ? styles.isLive : ""}`} style={{ height: rowHeight }}>
-              <div className={styles.meta}>
-                <time className={styles.when} dateTime={event.allDay && event.startDate ? event.startDate : event.start}>
-                  {when.live && <span className={styles.pip} aria-hidden="true" />}
-                  <span className={styles.day}>{when.day}</span>
-                  <span className={styles.detail}>{when.detail}</span>
-                </time>
-                {event.location && <span className={styles.place}>{event.location}</span>}
-              </div>
-              <p className={styles.title}>{event.title}</p>
-            </li>
-          );
-        })}
-      </ol>
+    <section className={cx(styles.events, full ? styles.full : styles.compact)} aria-label="Upcoming events" style={{ "--days": WEEK_DAYS } as CSSProperties}>
+      {full ? <>{strip}<Agenda events={shown} now={now} formats={formats} /></> : <><NextUp event={next} now={now} formats={formats} />{strip}</>}
     </section>
   );
 }

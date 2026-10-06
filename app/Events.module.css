@@ -1,8 +1,7 @@
 /*
- * Upcoming events (app/Events.tsx). The block fills whatever box it is given; Events.tsx counts how many
- * whole rows fit and sets each row's height, so ROW_MIN_PX (72), RULE_PX (1) and HEADER_PX (32) there must
- * match the numbers here: a row's content is 26 + 2 + 34 = 62px, the header is 26 + 5 + 1.
- * Colours and faces are the page's own (--ink, --muted, --faint, --line, --mono, --sans in globals.css).
+ * Upcoming events (app/Events.tsx): the week drawn as seven tracks, with the next event in words above it (compact)
+ * or every event that fits, grouped by day, below it (full). Colours and faces are the page's own (--ink, --muted,
+ * --faint, --line, --sans in globals.css); gold is the brand's live signal, so it marks only what is under way now.
  */
 
 .events {
@@ -13,76 +12,150 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  animation: events-in var(--bab-slow) linear;
 }
 
-.header {
-  flex: none;
-  height: 32px;
-  border-bottom: 1px solid var(--line);
-  color: var(--faint);
-  font: 400 20px/26px var(--mono);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-/* Each page of events fades in as it takes its turn (Events.tsx remounts the list per page). */
-.list {
-  flex: none;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  animation: page-in var(--bab-slow) linear;
-}
-
-@keyframes page-in {
+@keyframes events-in {
   from {
     opacity: 0;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .list {
-    animation: none;
-  }
+.compact {
+  gap: 14px;
 }
 
-/* content-box: the hairline between rows is counted on top of the height Events.tsx sets. */
-.row {
-  box-sizing: content-box;
-  min-width: 0;
-  overflow: hidden;
+.full {
+  gap: 30px;
+}
+
+/* --- The week strip ------------------------------------------------------------------------------------------ */
+
+.week {
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  grid-template-rows: auto auto minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 6px;
+}
+
+.compact .week {
+  flex: 1;
+  min-height: 0;
+}
+
+.full .week {
+  flex: none;
+  height: 236px;
+}
+
+.dayHead {
+  grid-row: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  align-items: center;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
 }
 
-.row + .row {
-  border-top: 1px solid var(--line);
+.weekday {
+  font: 400 20px/22px var(--sans);
 }
 
-.meta {
+.date {
+  font: 600 26px/28px var(--sans);
+}
+
+.busy {
+  color: var(--muted);
+}
+
+.busy .date,
+.today .date {
+  color: var(--ink);
+}
+
+/* All-day and multi-day events: bars across the top of the days they cover. */
+.lane {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  column-gap: 8px;
+  row-gap: 4px;
+}
+
+.span {
+  height: 8px;
+  background: color-mix(in oklab, var(--ink) 45%, transparent);
+}
+
+/* Down through the hours the week's events fall in (trackWindow in event-week.ts), with a faint rule every two hours. */
+.track {
+  grid-row: 3;
+  position: relative;
+  min-height: 0;
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 calc(var(--rule-every) - 1px), var(--line) calc(var(--rule-every) - 1px) var(--rule-every)),
+    color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+/* The part of today that has already gone. */
+.past {
+  position: absolute;
+  inset: 0 0 auto;
+  background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--ink) 10%, transparent) 0 2px, transparent 2px 7px);
+}
+
+.block {
+  position: absolute;
+  left: 0;
+  right: 0;
+  min-height: 4px;
+  background: color-mix(in oklab, var(--ink) 45%, transparent);
+  /* A dark seam on top, so two events back to back or overlapping read as two. */
+  box-shadow: inset 0 2px 0 var(--bab-black);
+}
+
+.next {
+  background: var(--ink);
+}
+
+.block.live {
+  background: var(--bab-gold);
+  box-shadow: inset 0 2px 0 var(--bab-black), 0 0 18px color-mix(in oklab, var(--bab-gold) 55%, transparent);
+}
+
+.now {
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--bab-gold);
+}
+
+/* --- The next event (compact) -------------------------------------------------------------------------------- */
+
+.nextUp {
+  flex: none;
+  min-width: 0;
+}
+
+.nextWhen {
   display: flex;
   align-items: baseline;
   gap: 16px;
-  min-width: 0;
+  color: var(--muted);
+  font: 400 22px/28px var(--sans);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-/* When: the one thing that has to be read from across the room, so it never gives way to the location. */
-.when {
+.nextWhen time {
   flex: none;
   display: flex;
   align-items: baseline;
-  color: var(--muted);
-  font: 400 20px/26px var(--mono);
-  font-variant-numeric: tabular-nums;
-  text-transform: uppercase;
-}
-
-.day::after {
-  content: "\00b7";
-  margin: 0 9px;
-  color: var(--faint);
 }
 
 .place {
@@ -92,32 +165,118 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--faint);
-  font: 400 20px/26px var(--sans);
 }
 
-.title {
+.nextTitle {
   margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 28px/34px var(--sans);
+  font: 500 30px/36px var(--sans);
 }
 
-/* Happening now is a live signal, so it gets the gold: the word and a square pip, nothing else. */
-.isLive .day {
+.isLive .nextWhen time,
+.isLive .itemTime {
   color: var(--bab-gold);
 }
 
 .pip {
   flex: none;
   align-self: center;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   margin-right: 10px;
   background: var(--bab-gold);
 }
 
-/* Nothing to list: the same quiet box as the column's other empty states. */
+/* --- Every event, by day (full) ------------------------------------------------------------------------------ */
+
+/* Positioned, so each row's offsetTop is measured from here (useFitCount in Events.tsx). */
+.agenda {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.dayGroup {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  column-gap: 20px;
+  padding: 22px 0;
+}
+
+.dayGroup:first-child {
+  padding-top: 0;
+}
+
+.dayGroup + .dayGroup {
+  border-top: var(--bab-hair) solid var(--line);
+}
+
+.dayMark {
+  display: flex;
+  flex-direction: column;
+}
+
+.dayNumber {
+  font: 600 48px/48px var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.dayName {
+  margin-top: 4px;
+  color: var(--muted);
+  font: 400 22px/26px var(--sans);
+}
+
+.dayEvents {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: baseline;
+}
+
+.itemTime {
+  display: flex;
+  align-items: baseline;
+  color: var(--muted);
+  font: 400 22px/34px var(--sans);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.itemTitle {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font: 500 28px/34px var(--sans);
+}
+
+.itemPlace {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font: 400 22px/28px var(--sans);
+}
+
+/* --- Nothing to list ----------------------------------------------------------------------------------------- */
+
 .isEmpty {
   align-items: center;
   justify-content: center;
@@ -131,4 +290,10 @@
   line-height: 1.3;
   text-align: center;
   text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .events {
+    animation: none;
+  }
 }
