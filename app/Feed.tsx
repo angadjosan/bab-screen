@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FEED_LABELS, type FeedItem, type FeedLabel, type FeedResponse } from "@/lib/feed-types";
 import { useFeaturedStory, type Story } from "./Markets";
 import styles from "./Story.module.css";
 
-/** How fast the list drifts downward, in stage pixels per second. The loop takes as long as the list is tall. */
+/** How fast the list drifts upward, in stage pixels per second. The loop takes as long as the list is tall. */
 export const FEED_SCROLL_PX_PER_S = 30;
 /** With reduced motion the list does not move; it shows a screenful of whole items at a time, each for this long. */
 export const FEED_PAGE_MS = 15_000;
@@ -19,7 +19,7 @@ const MAX_ITEMS = 30;
 /** A summary is shown only if its first sentence is no longer than this (three lines of the column). */
 const SUMMARY_MAX_CHARS = 120;
 const SUMMARY_MIN_CHARS = 40;
-/** One copy of a list in the track. Scrolling shows two: the one on screen and, above it, the one that follows it. */
+/** One copy of a list in the track. Scrolling shows two: the one on screen and, below it, the one that follows it. */
 type Half = { key: number; items: FeedItem[] };
 type Page = { from: number; to: number; top: number };
 type Note = "loading" | "empty" | "error";
@@ -189,43 +189,72 @@ function Entry({ item, now, hidden }: { item: FeedItem; now: number; hidden: boo
   );
 }
 
-/** The longest name that still fits the column at each size of the note's headline. */
-const NOTE_NAME_SIZES: readonly [number, number][] = [[11, 76], [16, 60], [24, 48]];
-const NOTE_NAME_MIN_PX = 40;
+/** Summary type sizes (font, line), largest first. The note takes the largest at which it fits the column. */
+const NOTE_SUMMARY_STEPS: readonly [number, number][] = [[34, 45], [30, 40], [26, 35], [22, 30]];
+
+const outletList = new Intl.ListFormat("en-US", { style: "long", type: "conjunction" });
 
 /**
- * The note on a newsworthy token: what happened, and which outlets reported it. The summary is written by a
+ * Sets the summary to the largest step at which the whole note fits its box, and below the smallest step cuts the
+ * summary to the lines that fit. The column's height changes as recent spots and the coin flip tile come and go.
+ */
+function fitNote(article: HTMLElement, summary: HTMLElement) {
+  summary.style.removeProperty("--summary-lines");
+  const fits = () => article.scrollHeight <= article.clientHeight;
+  for (const [size, line] of NOTE_SUMMARY_STEPS) {
+    summary.style.setProperty("--summary-size", `${size}px`);
+    summary.style.setProperty("--summary-line", `${line}px`);
+    if (fits()) return;
+  }
+  const [, line] = NOTE_SUMMARY_STEPS[NOTE_SUMMARY_STEPS.length - 1];
+  const overflow = article.scrollHeight - article.clientHeight;
+  const textHeight = summary.clientHeight - parseFloat(getComputedStyle(summary).paddingTop);
+  summary.style.setProperty("--summary-lines", String(Math.max(1, Math.floor((textHeight - overflow) / line))));
+}
+
+function noteSource(story: Story) {
+  return story.outlets.length ? `AI summary of reports from ${outletList.format(story.outlets)}` : "AI summary of today's reports";
+}
+
+/**
+ * The note on a newsworthy token: what happened, and which outlets reported it. The featured header beside it
+ * already shows the name and symbol large, so the note leads with the news. The summary is written by a
  * model (lib/newsworthy.ts), so it is rendered as text and nothing else: no links, no markup.
  */
-function Note({ story, on, now }: { story: Story; on: boolean; now: number }) {
-  const { name, symbol } = story.asset;
-  const size = NOTE_NAME_SIZES.find(([chars]) => name.length <= chars)?.[1] ?? NOTE_NAME_MIN_PX;
-  const when = age(story.newestAt, now);
+function Note({ story, on }: { story: Story; on: boolean }) {
+  const { name } = story.asset;
+  const article = useRef<HTMLElement>(null);
+  const summary = useRef<HTMLParagraphElement>(null);
+
+  useLayoutEffect(() => {
+    const box = article.current;
+    const text = summary.current;
+    if (!box || !text) return;
+    const fit = () => fitNote(box, text);
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [story]);
+
   return (
-    <article className={on ? `${styles.story} ${styles.on}` : styles.story} aria-label={`${name} in the news`} aria-hidden={!on}>
-      <p className={styles.kicker}><span className={styles.dot} aria-hidden="true" />In the news</p>
-      <h2 className={styles.name} style={{ "--name-size": `${size}px` } as CSSProperties} dir="auto">{name}</h2>
-      <p className={styles.symbol}>{symbol}</p>
-      <p className={styles.summary} dir="auto">{story.summary}</p>
-      <div className={styles.foot}>
-        {story.outlets.length > 0 && (
-          <p className={styles.outlets}><span className={styles.label}>Reported by</span>{story.outlets.join(", ")}</p>
-        )}
-        <p className={styles.credit}>AI summary{when ? ` · latest report ${when}` : ""}</p>
-      </div>
+    <article ref={article} className={on ? `${styles.story} ${styles.on}` : styles.story} aria-label={`${name} in the news`} aria-hidden={!on}>
+      <h2 className={styles.heading} dir="auto"><span className={styles.dot} aria-hidden="true" />{name} in the news</h2>
+      <p ref={summary} className={styles.summary} dir="auto">{story.summary}</p>
+      <p className={styles.source}>{noteSource(story)}</p>
     </article>
   );
 }
 
 /**
- * Curated news and posts from /api/feed, drifting slowly downward in a loop. Fills its container.
+ * Curated news and posts from /api/feed, drifting slowly upward in a loop. Fills its container.
  *
  * While a newsworthy token is in the featured slot (see MarketsProvider) its note covers the list, and the
  * list stops moving underneath, so it carries on from the same place when the note goes.
  *
- * The track holds two copies of the list, the second drawn above the first (see .feed-track in globals.css).
- * It slides down by the height of the second, which leaves the second exactly where the first began; the
- * first is then dropped and a fresh copy added above. A new list from a poll goes into that fresh copy, which
+ * The track holds two copies of the list, the second below the first. It slides up by the height of the
+ * first, which leaves the second exactly where the first began; the first is then dropped and a fresh copy
+ * added below. A new list from a poll goes into that fresh copy, which
  * is out of sight when it is added, so the content changes without a jump. A list short enough to fit is
  * shown still.
  */
@@ -263,7 +292,7 @@ export function Feed() {
     const current = halvesRef.current;
     // Not scrolling (first list, a list that fits, or paged): nothing to keep in step with, so replace it.
     if (current.length < 2) { pending.current = null; commit([{ key: ++keys.current, items }]); return; }
-    // The upper copy starts coming into view as soon as the slide does; the new list follows it instead.
+    // The lower copy is already lined up behind the one on screen; the new list follows it instead.
     pending.current = items;
   }, [commit]);
 
@@ -385,15 +414,15 @@ export function Feed() {
       setPaging((p) => (p.pages.length ? { pages: [], index: 0 } : p));
       const current = halvesRef.current;
       if (current.length < 2) commit([current[0], { key: ++keys.current, items: current[0].items }]);
-      // The copy above is what slides in. On the pass that adds it, it is not in the track yet: it is the same list.
-      const travel = strip.children.length > 1 ? (strip.lastElementChild as HTMLElement).offsetHeight : height;
+      // The copy on screen is what slides out, so the loop is as long as it is tall.
+      const travel = height;
       if (travel === measured && animation.current) return;
       measured = travel;
       const elapsed = Number(animation.current?.currentTime) || 0;
       stop();
       const duration = (travel / FEED_SCROLL_PX_PER_S) * 1000;
       const run = strip.animate(
-        [{ transform: `translate3d(0, ${-travel}px, 0)` }, { transform: "translate3d(0, 0, 0)" }],
+        [{ transform: "translate3d(0, 0, 0)" }, { transform: `translate3d(0, ${-travel}px, 0)` }],
         { duration, easing: "linear", fill: "forwards" },
       );
       run.currentTime = Math.min(elapsed, duration);
@@ -442,7 +471,7 @@ export function Feed() {
       {shownAlerts.length > 0 && <Alerts items={shownAlerts} now={now} />}
       <div className={styles.column}>
         <div className={covered ? `${styles.layer} ${styles.away}` : styles.layer} aria-hidden={covered || undefined}>{list}</div>
-        {noted && <Note story={noted} on={covered} now={now} />}
+        {noted && <Note story={noted} on={covered} />}
       </div>
     </div>
   );

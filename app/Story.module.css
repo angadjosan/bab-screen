@@ -32,77 +32,62 @@
   }
 }
 
-/* The brand's block, as in the featured header: a mono label, one large Garamond line, then running text. */
+/* A one-line heading, then the summary in the size that fits (fitNote in Feed.tsx), and the sources last.
+   Clipped, never spilling: the column under the feed holds the recent spots and the coin flip tile. */
 .story {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   padding-top: 22px;
   color: var(--ink);
 }
 
-.kicker {
+.heading {
   display: flex;
   align-items: center;
-  gap: 12px;
-  color: var(--faint);
-  font: 500 20px/26px var(--mono);
-  text-transform: uppercase;
+  gap: 14px;
+  margin: 0;
+  color: var(--muted);
+  font: 500 26px/32px var(--sans);
+  overflow-wrap: anywhere;
 }
 
 /* Gold is the brand's live signal, and this is one: the token on screen is in today's news. */
 .dot {
   flex: none;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   background: var(--bab-gold);
+  animation: note-pulse 2.4s ease-in-out infinite;
 }
 
-.name {
-  margin: 26px 0 0;
-  font: 500 var(--name-size, 76px) / 1 var(--display);
-  overflow-wrap: anywhere;
+@keyframes note-pulse {
+  50% {
+    opacity: .4;
+  }
 }
 
-.symbol {
-  margin-top: 12px;
-  color: var(--faint);
-  font: 500 26px/32px var(--mono);
-  text-transform: uppercase;
-}
-
-/* The one thing to read from across the room: larger than a feed headline, and never clamped. */
+/* The one thing to read from across the room: larger than a feed headline while there is room for it. */
 .summary {
-  margin-top: 30px;
-  padding-top: 30px;
+  flex: none;
+  margin-top: 18px;
+  padding-top: 18px;
   border-top: var(--bab-hair) solid var(--line);
-  font: 400 34px/45px var(--sans);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--summary-lines, none);
+  overflow: hidden;
+  font: 400 var(--summary-size, 34px) / var(--summary-line, 45px) var(--sans);
   overflow-wrap: anywhere;
 }
 
-.foot {
+.source {
+  flex: none;
   margin-top: auto;
-  padding-top: 22px;
-  border-top: var(--bab-hair) solid var(--line);
-}
-
-.label {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--faint);
-  font: 400 18px/26px var(--mono);
-  text-transform: uppercase;
-}
-
-.outlets {
+  padding-top: 16px;
   color: var(--muted);
-  font: 500 22px/30px var(--sans);
-}
-
-.credit {
-  margin-top: 14px;
-  color: var(--faint);
-  font: 400 18px/26px var(--mono);
-  text-transform: uppercase;
+  font: 400 22px/30px var(--sans);
+  text-wrap: pretty;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -111,5 +96,9 @@
   .away,
   .story:not(.on) {
     transition: none;
+  }
+
+  .dot {
+    animation: none;
   }
 }

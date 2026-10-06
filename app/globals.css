@@ -178,12 +178,6 @@ p {
   will-change: transform;
 }
 
-/* The list moves downward, so the copy that follows the one on screen sits above it. */
-.feed.is-scrolling .feed-track {
-  display: flex;
-  flex-direction: column-reverse;
-}
-
 .feed-group {
   margin: 0;
   padding: 0;
