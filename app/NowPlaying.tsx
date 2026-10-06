@@ -148,7 +148,9 @@ export function NowPlaying() {
       data !== "idle" && data.status === "unavailable"
         ? data.reason === "automation_permission"
           ? "To show the song, allow this app to control Spotify in System Settings > Privacy & Security > Automation"
-          : "Spotify is not responding"
+          : data.reason === "not_connected" || data.reason === "login_expired"
+            ? "To show the song, connect Spotify at /api/spotify/login"
+            : "Spotify is not responding"
         : "Nothing playing";
     return (
       <section className="now-playing is-empty" aria-label="Now playing">

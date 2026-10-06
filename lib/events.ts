@@ -14,6 +14,7 @@
 
 import { createHash } from "node:crypto";
 import ICAL from "ical.js";
+import { inBackground } from "./jobs";
 
 /** The zone the wall shows times in, and the zone all-day events are days of. */
 export const EVENTS_TIME_ZONE = "America/Los_Angeles";
@@ -521,6 +522,8 @@ export function getEvents(now = Date.now()): EventsResponse {
       if (runtime.refreshing === run) runtime.refreshing = null;
     });
     runtime.refreshing = run;
+    // On Vercel the function stays up until the download is done, after the reply has gone.
+    inBackground(run);
   }
 
   const message = runtime.error ?? undefined;

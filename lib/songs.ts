@@ -4,11 +4,14 @@
 // is not a song request: it puts the Jam QR on the screen for a minute (lib/jam.ts).
 //
 // syncSongs() is the single entry point. It is idempotent (a persisted cursor means a message is
-// only ever handled once, across restarts too), safe to call concurrently, and never throws.
+// only ever handled once, across restarts too), safe to call concurrently, and never throws. A
+// round runs as the "songs" job (lib/jobs.ts): at most one at a time across every server instance,
+// started by the screen's requests, the cron route, and on the Mac also by a timer.
 
 import { getJamStatus, looksLikeJamTrigger, parseJamTrigger, recordJamTrigger, type JamStatus } from "./jam";
+import { runJob, type JobSpec } from "./jobs";
 import { resolveUserName } from "./slack-users";
-import { readJson, writeJson } from "./songs-store";
+import { onVercel, readJson, writeJson } from "./store";
 import {
   PLAYLIST_SCOPES,
   QUEUE_SCOPES,
@@ -37,7 +40,8 @@ const MAX_PENDING = 50;
 // Long enough that a request is still in the log when its track finally plays behind a long queue
 // (lib/song-credit.ts reads it for the "Queued by" line).
 const MAX_LOG = 200;
-const MIN_RUN_INTERVAL_MS = 5_000;
+/** Longer than a round can take (the Vercel function running it is stopped after 300 s). */
+const LEASE_MS = 6 * 60_000;
 const SLACK_ERROR_BACKOFF_MS = 60_000;
 const DEFAULT_MAX_AGE_MINUTES = 30;
 const DEFAULT_POLL_SECONDS = 20;
@@ -176,11 +180,11 @@ export type SongsStatus = {
   recent: SongResult[];
 };
 
-// Kept on globalThis so every copy of this module (route bundles, dev-mode reloads, the
-// instrumentation hook) shares one lock, one timer and one view of Slack's health.
+// Kept on globalThis so every copy of this module (route bundles, dev-mode reloads) shares one
+// timer and one view of Slack's health. The lock between rounds is the job's lease, in the store.
 type Runtime = {
-  running?: Promise<SongsStatus>;
-  lastRunAt: number;
+  /** Why the last round on this instance failed, if it did. */
+  lastFailure: string | null;
   timer?: ReturnType<typeof setInterval>;
   tick?: () => void;
   slackRetryAt: number;
@@ -195,7 +199,7 @@ type Runtime = {
 };
 const globalStore = globalThis as typeof globalThis & { __babSongs?: Runtime };
 const runtime: Runtime = (globalStore.__babSongs ??= {
-  lastRunAt: 0,
+  lastFailure: null,
   slackRetryAt: 0,
   slackCanRead: null,
   slackError: null,
@@ -224,7 +228,7 @@ function maxAgeMs(): number {
   return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_MAX_AGE_MINUTES) * 60_000;
 }
 
-function pollSeconds(): number {
+export function pollSeconds(): number {
   const raw = process.env.SONGS_POLL_SECONDS?.trim();
   if (!raw) return DEFAULT_POLL_SECONDS;
   const seconds = Number(raw);
@@ -1030,7 +1034,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       problem: spotifyProblem,
       help: spotifyHelpText,
     },
-    loop: { running: Boolean(runtime.timer), everySeconds },
+    loop: { running: Boolean(runtime.timer) || (onVercel() && everySeconds > 0), everySeconds },
     jam: await getJamStatus(),
     lastSyncAt: state.lastSyncAt,
     pending: state.pending.map((request) => ({
@@ -1048,45 +1052,53 @@ export async function getSongsStatus(): Promise<SongsStatus> {
   };
 }
 
-/**
- * Reads new Slack messages and acts on them, then returns the status. Concurrent calls share one
- * run; calls within a few seconds of the last run return the status without doing work unless
- * `force` is set. Never throws.
- */
-export function syncSongs(options: { force?: boolean } = {}): Promise<SongsStatus> {
-  if (runtime.running) return runtime.running;
-  if (!options.force && Date.now() - runtime.lastRunAt < MIN_RUN_INTERVAL_MS) return getSongsStatus();
-
-  runtime.running = (async () => {
-    let failure: string | null = null;
+export const songsJob: JobSpec = {
+  name: "songs",
+  leaseMs: LEASE_MS,
+  everyMs: () => (pollSeconds() || DEFAULT_POLL_SECONDS) * 1000,
+  retryMs: 30_000,
+  enabled: () => Boolean(process.env.SLACK_BOT_TOKEN && songsChannel()),
+  run: async () => {
     try {
       await run();
+      runtime.lastFailure = null;
     } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-      console.error("Song sync failed:", failure);
+      runtime.lastFailure = error instanceof Error ? error.message : String(error);
+      console.error("Song sync failed:", runtime.lastFailure);
+      throw error;
     }
-    const status = await getSongsStatus();
-    return failure ? { ...status, status: "error" as const, message: `Sync failed: ${failure}` } : status;
-  })().finally(() => {
-    runtime.lastRunAt = Date.now();
-    runtime.running = undefined;
-  });
-  return runtime.running;
+  },
+};
+
+/** Whether the song-request poll is on (SONGS_POLL_SECONDS=0 turns it off; /api/songs/sync?force=1 still works). */
+export function songsPolling(): boolean {
+  return pollSeconds() > 0;
+}
+
+/**
+ * Reads new Slack messages and acts on them if a round is due (or `force` is set) and no other
+ * instance is running one, then returns the status. Never throws.
+ */
+export async function syncSongs(options: { force?: boolean } = {}): Promise<SongsStatus> {
+  const outcome = await runJob(songsJob, { force: options.force });
+  const status = await getSongsStatus();
+  return outcome === "failed" && runtime.lastFailure ? { ...status, status: "error" as const, message: `Sync failed: ${runtime.lastFailure}` } : status;
 }
 
 // Always point the timer at the newest copy of this module (dev-mode reloads re-run this line).
 runtime.tick = () => {
-  void syncSongs();
+  void runJob(songsJob);
 };
 
 /**
- * Starts the background poll (every SONGS_POLL_SECONDS, default 20; 0 disables it). Safe to call
- * repeatedly: there is one timer per server process.
+ * Starts the background poll on a long-running server (every SONGS_POLL_SECONDS, default 20; 0
+ * disables it). Safe to call repeatedly: there is one timer per server process. On Vercel there is
+ * no process to keep a timer in; the screen's requests and the cron route start the rounds instead.
  */
 export function ensureSongsLoop(): boolean {
   const seconds = pollSeconds();
   if (seconds === 0) return false;
-  if (!runtime.timer) {
+  if (!runtime.timer && !onVercel()) {
     runtime.timer = setInterval(() => runtime.tick?.(), seconds * 1000);
     runtime.timer.unref?.();
   }

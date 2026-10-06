@@ -3,8 +3,10 @@ import { getFeed } from "../../../lib/feed";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Room for the refresh that a request starts in the background, after the reply.
+export const maxDuration = 300;
 
-// Answers from memory. The first request starts the background refresh loop (lib/feed.ts);
+// Answers from memory. A request starts the background refresh when one is due (lib/feed.ts);
 // fetching the sources and asking the model never happens inside a request.
 export async function GET() {
   try {

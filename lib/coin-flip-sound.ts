@@ -1,66 +1,70 @@
-// Coin flip sound, played on this Mac with afplay so no browser autoplay permission is needed, and Spotify turned
-// down while it plays. The page sends the cues as its animation reaches them (app/CoinFlip.tsx).
+// Coin flip sound. The page plays the two sounds itself (app/CoinFlip.tsx, public/sounds/*.mp3) and
+// sends the cues here as its animation reaches them, so that Spotify is turned down while the coin
+// is in the air. That goes through the Web API volume control of whichever device is playing
+// (lib/spotify.ts, scope user-modify-playback-state), so it works wherever the server runs. With no
+// Spotify login, or a device without volume control, nothing is turned down and the cue is a no-op.
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
-import path from "node:path";
+import { inBackground } from "./jobs";
+import { playerVolume, setPlayerVolume } from "./spotify";
+import { readJson, writeJson } from "./store";
 
 export const CUES = ["start", "toss", "land"] as const;
 export type Cue = (typeof CUES)[number];
 
-const SOUNDS: Partial<Record<Cue, string>> = { toss: "coin-flip-toss.mp3", land: "coin-flip-land.mp3" };
 /** Spotify's volume during the flip, as a share of what it was. */
 const DUCKED = .2;
-const FADE = [.7, .45, .3, DUCKED];
-/** Spotify comes back this long after the landing sound starts, or after the flip starts if no landing follows. */
+/** Spotify comes back this long after the landing, or after the flip starts if no landing follows. */
 const RESTORE_AFTER_LAND_MS = 3_600;
 const RESTORE_AT_MOST_MS = 30_000;
 /** A second page showing the same flip sends the same cues; they are ignored. */
 const REPEAT_MS = 4_000;
+const FILE = "coin-flip-duck.json";
 
-const shared = globalThis as { coinFlipSound?: { volume: number | null; timer?: NodeJS.Timeout; playing?: ChildProcess; last: Partial<Record<Cue, number>> } };
-const state = (shared.coinFlipSound ??= { volume: null, last: {} });
+type Duck = {
+  /** Spotify's volume before it was turned down; null while it is not. */
+  volume: number | null;
+  /** When it goes back up. */
+  restoreAt: number | null;
+  last: Partial<Record<Cue, number>>;
+};
 
-const spotify = (command: string) =>
-  new Promise<string>((resolve) => {
-    execFile("osascript", ["-e", `if application "Spotify" is running then tell application "Spotify" to ${command}`], { timeout: 3_000 }, (error, out) => resolve(error ? "" : String(out).trim()));
-  });
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
-async function fade(from: number, steps: number[]) {
-  for (const share of steps) await spotify(`set sound volume to ${Math.round(from * share)}`);
+async function load(): Promise<Duck> {
+  const saved = await readJson<Duck>(FILE);
+  return { volume: typeof saved?.volume === "number" ? saved.volume : null, restoreAt: saved?.restoreAt ?? null, last: saved?.last ?? {} };
 }
 
-async function restore() {
-  clearTimeout(state.timer);
+/** Puts the volume back at `at`, unless a later cue has moved the time on by then. */
+async function restoreAt(at: number): Promise<void> {
+  await pause(at - Date.now());
+  const state = await load();
+  if (state.volume === null || state.restoreAt === null || state.restoreAt > Date.now() + 50) return;
   const volume = state.volume;
-  if (volume === null) return;
-  state.volume = null;
-  await fade(volume, [...FADE].reverse().slice(1).concat(1));
+  await writeJson(FILE, { ...state, volume: null, restoreAt: null } satisfies Duck);
+  await setPlayerVolume(volume).catch(() => undefined);
 }
 
-async function duck() {
-  clearTimeout(state.timer);
-  state.timer = setTimeout(() => void restore(), RESTORE_AT_MOST_MS);
-  if (state.volume !== null) return;
-  const volume = Number(await spotify("get sound volume") || NaN);
-  if (!Number.isFinite(volume) || state.volume !== null) return;
-  state.volume = volume;
-  await fade(volume, FADE);
-}
-
-function play(file: string) {
-  state.playing?.kill();
-  const child = spawn("afplay", [path.join(process.cwd(), "public", "sounds", file)], { stdio: "ignore" });
-  child.on("error", () => {});
-  state.playing = child;
-}
-
-export async function coinFlipCue(cue: Cue) {
+export async function coinFlipCue(cue: Cue): Promise<void> {
+  const state = await load();
   const now = Date.now();
   if (now - (state.last[cue] ?? 0) < REPEAT_MS) return;
   state.last[cue] = now;
-  const sound = SOUNDS[cue];
-  if (sound) play(sound);
-  if (cue !== "land") return duck();
-  clearTimeout(state.timer);
-  state.timer = setTimeout(() => void restore(), RESTORE_AFTER_LAND_MS);
+  if (cue === "land") {
+    state.restoreAt = now + RESTORE_AFTER_LAND_MS;
+  } else {
+    if (state.volume === null) {
+      const volume = await playerVolume().catch(() => null);
+      if (volume !== null && volume > 0) {
+        state.volume = volume;
+        await setPlayerVolume(volume * DUCKED).catch(() => {
+          state.volume = null;
+        });
+      }
+    }
+    state.restoreAt = now + RESTORE_AT_MOST_MS;
+  }
+  await writeJson(FILE, state);
+  // Kept alive after the reply on Vercel (the sound route allows 60 s).
+  if (state.volume !== null) inBackground(restoreAt(state.restoreAt));
 }

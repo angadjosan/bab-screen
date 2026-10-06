@@ -3,6 +3,8 @@ import { DEFAULT_BATCH, getQuotes } from "../../../lib/quotes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Room for the refresh that a request starts in the background, after the reply.
+export const maxDuration = 300;
 
 // Answers from memory with a random sample of the pool (?count=, 40 by default, 100 at most).
 // Reading Slack never happens inside a request: getQuotes starts it in the background when due.

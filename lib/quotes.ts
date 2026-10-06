@@ -1,19 +1,21 @@
 // Quotes for the wall: reads the club's quotes channel in Slack (SLACK_QUOTES_CHANNEL_ID), turns each
 // top-level message a person posted into a quote (its words, who said them when the message names
 // them, and its picture if it has one) and keeps the result as a pool in memory (and in
-// .data/quotes.json, so a restart has it at once).
+// quotes.json in the store, lib/store.ts, so a restart or another server instance has it at once).
 //
 // GET /api/quotes never waits for Slack: it answers with a random sample of the pool and, when the
-// pool is older than REFRESH_MS, starts a re-read in the background. Only the last 18 months of the
+// pool is older than REFRESH_MS, starts a re-read in the background (the "quotes" job, lib/jobs.ts,
+// so only one instance reads at a time). Only the last 18 months of the
 // channel are read (QUOTES_MAX_AGE_DAYS), and older quotes are dropped. The whole channel window is
 // re-read each time rather than only what is new, so a quote that was edited or deleted in Slack
 // leaves the screen within the hour.
 //
 // Read-only: the only Slack methods called are conversations.history and users.info.
 
+import { inBackground, markDue, runJob, type JobSpec } from "./jobs";
 import { signedImagePath } from "./slack";
 import { resolveUserName } from "./slack-users";
-import { readJson, writeJson } from "./songs-store";
+import { readJson, reloadAfterMs, writeJson } from "./store";
 
 export type Quote = {
   /** Slack message ts; unique within the channel and stable across refreshes. */
@@ -662,14 +664,19 @@ type Stored = {
   stats: QuoteStats | null;
   /** Display names of posters and mentioned users, kept for a week so a refresh does not ask Slack for each again. */
   names: Record<string, StoredName>;
+  /** Why the last read failed, if it did. */
+  error?: string | null;
 };
 
 // On globalThis so every copy of this module (route bundles, dev-mode reloads) shares one pool.
+// When the next read is due is the job's business (lib/jobs.ts), kept in the store.
 type Runtime = {
   state: Stored;
-  loaded: Promise<void> | null;
-  refreshing: Promise<void> | null;
-  nextRefreshAt: number;
+  loading: Promise<void> | null;
+  /** When the pool was last read from the store. */
+  loadedAt: number;
+  /** True while this instance is reading Slack. */
+  refreshing: boolean;
   error: string | null;
 };
 
@@ -680,9 +687,9 @@ function emptyState(channel: string | null): Stored {
 const globalStore = globalThis as typeof globalThis & { __babQuotes?: Runtime };
 const runtime: Runtime = (globalStore.__babQuotes ??= {
   state: emptyState(null),
-  loaded: null,
-  refreshing: null,
-  nextRefreshAt: 0,
+  loading: null,
+  loadedAt: 0,
+  refreshing: false,
   error: null,
 });
 
@@ -690,9 +697,13 @@ function quotesChannel(): string | null {
   return process.env.SLACK_QUOTES_CHANNEL_ID?.trim() || null;
 }
 
-function load(): Promise<void> {
-  runtime.loaded ??= (async () => {
+/** Reads the pool from the store once, and again when another instance may have renewed it. */
+function load(force = false): Promise<void> {
+  if (runtime.loading) return runtime.loading;
+  if (!force && (runtime.refreshing || (runtime.loadedAt > 0 && Date.now() - runtime.loadedAt < reloadAfterMs()))) return Promise.resolve();
+  runtime.loading = (async () => {
     const stored = await readJson<Partial<Stored>>(STATE_FILE);
+    runtime.loadedAt = Date.now();
     if (!stored || stored.version !== STATE_VERSION || !Array.isArray(stored.quotes)) return;
     runtime.state = {
       ...emptyState(stored.channel ?? null),
@@ -700,11 +711,13 @@ function load(): Promise<void> {
       updatedAt: stored.updatedAt ?? null,
       stats: stored.stats ?? null,
       names: stored.names && typeof stored.names === "object" ? stored.names : {},
+      error: typeof stored.error === "string" ? stored.error : null,
     };
-    const updated = stored.updatedAt ? Date.parse(stored.updatedAt) : NaN;
-    if (Number.isFinite(updated)) runtime.nextRefreshAt = updated + REFRESH_MS;
-  })();
-  return runtime.loaded;
+    runtime.error = runtime.state.error ?? null;
+  })().finally(() => {
+    runtime.loading = null;
+  });
+  return runtime.loading;
 }
 
 async function save(): Promise<void> {
@@ -751,7 +764,9 @@ async function resolveNames(messages: SlackMessage[], known: Record<string, Stor
   return names;
 }
 
-async function refresh(channel: string): Promise<void> {
+/** One read of the channel. Returns the time until the next one. */
+async function refresh(channel: string): Promise<number> {
+  let next: number;
   try {
     const oldestMs = oldestAllowedMs();
     const { messages, partial } = await readHistory(channel, oldestMs);
@@ -773,17 +788,39 @@ async function refresh(channel: string): Promise<void> {
       names: known,
     };
     runtime.error = null;
-    runtime.nextRefreshAt = Date.now() + (partial ? PARTIAL_RETRY_MS : REFRESH_MS);
+    next = partial ? PARTIAL_RETRY_MS : REFRESH_MS;
   } catch (error) {
     const slack = error instanceof SlackError ? error : new SlackError("unknown");
     runtime.error = slack.code;
-    runtime.nextRefreshAt = Date.now() + Math.max(RETRY_MS, slack.retryAfterMs ?? 0);
+    next = Math.max(RETRY_MS, slack.retryAfterMs ?? 0);
     // If Slack says the bot may not read the channel, stop showing what it read earlier.
     if (isAccessError(slack.code)) runtime.state = { ...emptyState(channel), names: runtime.state.names };
     console.error(`Quotes: could not read Slack (${slack.code}). ${slackHelp(slack.code, channel)}`);
   }
+  runtime.state = { ...runtime.state, error: runtime.error };
   await save();
+  return next;
 }
+
+export const quotesJob: JobSpec = {
+  name: "quotes",
+  // Longer than a read can take: the Vercel function running it is stopped after 300 s.
+  leaseMs: 6 * 60_000,
+  everyMs: () => REFRESH_MS,
+  retryMs: RETRY_MS,
+  enabled: () => Boolean(process.env.SLACK_BOT_TOKEN && quotesChannel()),
+  run: async () => {
+    const channel = quotesChannel() as string;
+    await load(true);
+    if (runtime.state.channel !== channel) runtime.state = { ...emptyState(channel), names: runtime.state.names };
+    runtime.refreshing = true;
+    try {
+      return await refresh(channel);
+    } finally {
+      runtime.refreshing = false;
+    }
+  },
+};
 
 /**
  * Drops quotes that are older than the window from the pool, whether it came from the file, from
@@ -795,8 +832,8 @@ function pruneOld(): void {
   const kept = runtime.state.quotes.filter((quote) => inWindow(quote, oldestMs));
   if (kept.length === runtime.state.quotes.length) return;
   runtime.state = { ...runtime.state, quotes: kept };
-  runtime.nextRefreshAt = 0;
-  // A read that is already running writes the file itself when it finishes.
+  void markDue(quotesJob.name).catch(() => undefined);
+  // A read that is already running writes the store itself when it finishes.
   if (!runtime.refreshing) void save();
 }
 
@@ -831,19 +868,16 @@ export async function getQuotes(count: number = DEFAULT_BATCH): Promise<QuotesRe
       // Another channel: what is stored was read from somewhere else.
       runtime.state = { ...emptyState(channel), names: runtime.state.names };
       runtime.error = null;
-      runtime.nextRefreshAt = 0;
+      await markDue(quotesJob.name).catch(() => undefined);
     }
     if (runtime.state.version !== STATE_VERSION) {
       // Held in memory by a server that was running before the rules changed: serve it, but read again now.
       runtime.state = { ...runtime.state, version: STATE_VERSION };
-      runtime.nextRefreshAt = 0;
+      await markDue(quotesJob.name).catch(() => undefined);
     }
     pruneOld();
-    if (!runtime.refreshing && Date.now() >= runtime.nextRefreshAt) {
-      runtime.refreshing = refresh(channel).finally(() => {
-        runtime.refreshing = null;
-      });
-    }
+    // Runs only when due and only on one instance; the reply does not wait for it.
+    inBackground(runJob(quotesJob));
 
     const { quotes, updatedAt, stats } = runtime.state;
     const size = Math.min(Math.max(Math.floor(Number.isFinite(count) ? count : DEFAULT_BATCH), 1), MAX_BATCH);

@@ -3,9 +3,11 @@
 // selection from memory.
 //
 // GET /api/feed never waits for any of that. It answers from the last selection (kept in memory
-// and in .data/feed.json, so a restart shows it at once) and starts a refresh in the background
-// when the selection is older than REFRESH_MINUTES. The loop only runs while a screen is asking:
-// after IDLE_PAUSE_MINUTES without a request it stops fetching and stops calling the model.
+// and in feed.json in the store, lib/store.ts, so a restart or another instance shows it at once)
+// and starts a refresh in the background when the selection is older than REFRESH_MINUTES. The
+// refresh is the "feed" job (lib/jobs.ts): one instance at a time, also run by the cron route, and
+// only while a screen is asking: after IDLE_PAUSE_MINUTES without a request it stops fetching and
+// stops calling the model.
 //
 // The same refresh also feeds lib/newsworthy.ts (tokens in the news, served by /api/newsworthy).
 
@@ -22,16 +24,21 @@ import {
   REFRESH_MINUTES,
   TARGET_ITEMS,
 } from "./feed-sources";
+import { inBackground, noteDemand, runJob, type JobSpec } from "./jobs";
 import { refreshNewsworthy } from "./newsworthy";
-import { readJson, writeJson } from "./songs-store";
+import { readJson, reloadAfterMs, writeJson } from "./store";
 import type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
 
 export type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
 
 const STATE_FILE = "feed.json";
 const STATE_VERSION = 1;
-/** The loop wakes this often to see whether a refresh is due. */
-const TICK_MS = 60_000;
+/**
+ * Longer than a refresh can take: fetching, one model call for the feed and one for the
+ * newsworthy tokens, each up to FEED_AGENT_TIMEOUT_SECONDS. The Vercel function running it is
+ * stopped after 300 s anyway.
+ */
+const LEASE_MS = 6 * 60_000;
 /** After a refresh that produced nothing, wait this long before trying again. */
 const RETRY_AFTER_FAILURE_MS = 2 * 60_000;
 /** A selection older than this is reported as "degraded". */
@@ -50,36 +57,32 @@ type Stored = {
   history: string[][];
   /** Diagnostics for the last curation call; not part of the API. */
   agent: AgentReport | null;
+  /** Whether the last refresh produced a selection, and why not. */
+  lastRefreshFailed?: boolean;
+  lastError?: string | null;
 };
 
-// On globalThis so every copy of this module (route bundles, dev-mode reloads) shares one loop.
+// On globalThis so every copy of this module (route bundles, dev-mode reloads) shares one copy.
 type Runtime = {
   state: Stored;
-  loaded: Promise<void> | null;
-  refreshing: Promise<void> | null;
-  /** When the last refresh finished, and whether it produced a selection. */
-  lastRefreshAt: number;
-  lastRefreshFailed: boolean;
-  lastError: string | null;
-  lastRequestAt: number;
+  loading: Promise<void> | null;
+  /** When the selection was last read from the store. */
+  loadedAt: number;
+  /** True while this instance is refreshing. */
+  refreshing: boolean;
   caches: Map<string, SourceCache>;
-  timer?: ReturnType<typeof setInterval>;
-  tick?: () => void;
 };
 
 function emptyState(): Stored {
-  return { version: STATE_VERSION, items: [], updatedAt: null, curation: "fallback", sources: [], history: [], agent: null };
+  return { version: STATE_VERSION, items: [], updatedAt: null, curation: "fallback", sources: [], history: [], agent: null, lastRefreshFailed: false, lastError: null };
 }
 
 const globalStore = globalThis as typeof globalThis & { __babFeed?: Runtime };
 const runtime: Runtime = (globalStore.__babFeed ??= {
   state: emptyState(),
-  loaded: null,
-  refreshing: null,
-  lastRefreshAt: 0,
-  lastRefreshFailed: false,
-  lastError: null,
-  lastRequestAt: 0,
+  loading: null,
+  loadedAt: 0,
+  refreshing: false,
   caches: new Map(),
 });
 
@@ -103,10 +106,16 @@ const isItem = (value: unknown): value is FeedItem => {
   );
 };
 
-/** Reads .data/feed.json once per process. A missing, old or damaged file just means starting empty. */
-function load(): Promise<void> {
-  return (runtime.loaded ??= (async () => {
+/**
+ * Reads feed.json from the store once, and again when another instance may have renewed it. A
+ * missing, old or damaged document just means starting empty.
+ */
+function load(force = false): Promise<void> {
+  if (runtime.loading) return runtime.loading;
+  if (!force && (runtime.refreshing || (runtime.loadedAt > 0 && Date.now() - runtime.loadedAt < reloadAfterMs()))) return Promise.resolve();
+  return (runtime.loading = (async () => {
     const stored = await readJson<Partial<Stored>>(STATE_FILE);
+    runtime.loadedAt = Date.now();
     if (!stored || stored.version !== STATE_VERSION) return;
     const state = emptyState();
     if (Array.isArray(stored.items)) state.items = stored.items.filter(isItem).slice(0, MAX_ITEMS);
@@ -120,18 +129,20 @@ function load(): Promise<void> {
         .map((ids) => ids.filter((id): id is string => typeof id === "string"));
     }
     if (stored.agent && typeof stored.agent === "object") state.agent = stored.agent;
+    state.lastRefreshFailed = stored.lastRefreshFailed === true;
+    state.lastError = typeof stored.lastError === "string" ? stored.lastError : null;
     if (!state.items.length) state.updatedAt = null;
     runtime.state = state;
-    // A restart inside the refresh interval shows the stored selection and waits its turn.
-    if (state.updatedAt) runtime.lastRefreshAt = Date.parse(state.updatedAt);
-  })());
+  })().finally(() => {
+    runtime.loading = null;
+  }));
 }
 
 async function save(): Promise<void> {
   try {
     await writeJson(STATE_FILE, runtime.state);
   } catch (error) {
-    console.warn("[feed] could not save .data/feed.json:", error instanceof Error ? error.message : error);
+    console.warn("[feed] could not save feed.json:", error instanceof Error ? error.message : error);
   }
 }
 
@@ -197,13 +208,13 @@ async function refresh(): Promise<void> {
   const { pool, outlets } = buildCandidates(results, state.history[0]);
   if (!pool.length) {
     // Nothing usable: keep whatever is on screen and say why.
-    runtime.lastRefreshFailed = true;
-    runtime.lastError = results.some((result) => result.ok) ? "no recent items in any source" : "no source could be reached";
+    state.lastRefreshFailed = true;
+    state.lastError = results.some((result) => result.ok) ? "no recent items in any source" : "no source could be reached";
     await save();
     return;
   }
-  runtime.lastRefreshFailed = false;
-  runtime.lastError = null;
+  state.lastRefreshFailed = false;
+  state.lastError = null;
 
   // First selection ever: put the plain ordering up now rather than wait for the model.
   if (!state.items.length) publish(fallbackOrder(pool, state.history), pool, "fallback", now, false);
@@ -224,42 +235,36 @@ async function refresh(): Promise<void> {
   await refreshNewsworthy(results, Date.now());
 }
 
-/**
- * Runs one refresh unless one is already running (overlapping calls share it). Never rejects.
- * `force` skips the interval check; it is for scripts and tests, not for the route.
- */
-export function refreshFeed(options: { force?: boolean } = {}): Promise<void> {
-  if (runtime.refreshing) return runtime.refreshing;
-  const wait = runtime.lastRefreshFailed ? RETRY_AFTER_FAILURE_MS : refreshMs();
-  if (!options.force && runtime.lastRefreshAt && Date.now() - runtime.lastRefreshAt < wait) return Promise.resolve();
-  runtime.refreshing = (async () => {
+export const feedJob: JobSpec = {
+  name: "feed",
+  leaseMs: LEASE_MS,
+  everyMs: refreshMs,
+  retryMs: RETRY_AFTER_FAILURE_MS,
+  // Nobody is looking: no fetches, no model calls.
+  idleAfterMs: IDLE_PAUSE_MINUTES * 60_000,
+  run: async () => {
+    runtime.refreshing = true;
     try {
-      await load();
+      await load(true);
       await refresh();
     } catch (error) {
-      runtime.lastRefreshFailed = true;
-      runtime.lastError = "refresh failed";
-      console.warn("[feed] refresh failed:", error instanceof Error ? error.message : error);
+      runtime.state.lastRefreshFailed = true;
+      runtime.state.lastError = "refresh failed";
+      await save();
+      throw error;
     } finally {
-      runtime.lastRefreshAt = Date.now();
-      runtime.refreshing = null;
+      runtime.refreshing = false;
     }
-  })();
-  return runtime.refreshing;
-}
-
-runtime.tick = () => {
-  // Nobody is looking: no fetches, no model calls.
-  if (Date.now() - runtime.lastRequestAt > IDLE_PAUSE_MINUTES * 60_000) return;
-  void refreshFeed();
+    return runtime.state.lastRefreshFailed ? RETRY_AFTER_FAILURE_MS : refreshMs();
+  },
 };
 
-/** Starts the background loop. Safe to call on every request: there is one timer per server process. */
-export function ensureFeedLoop(): void {
-  if (!runtime.timer) {
-    runtime.timer = setInterval(() => runtime.tick?.(), TICK_MS);
-    runtime.timer.unref?.();
-  }
+/**
+ * Runs one refresh if one is due and no other instance is running one. Never rejects. `force`
+ * skips the interval check; it is for scripts and tests, not for the route.
+ */
+export async function refreshFeed(options: { force?: boolean } = {}): Promise<void> {
+  await runJob(feedJob, options);
 }
 
 function response(): FeedResponse {
@@ -274,33 +279,32 @@ function response(): FeedResponse {
     agentModel: picked?.model ?? null,
   };
   if (!state.items.length) {
-    if (runtime.lastRefreshFailed) return { status: "error", ...base, message: runtime.lastError ?? "refresh failed" };
+    if (state.lastRefreshFailed) return { status: "error", ...base, message: state.lastError ?? "refresh failed" };
     return { status: "empty", ...base, message: "First refresh in progress" };
   }
   const failing = state.sources.filter((source) => !source.ok);
   const stale = state.updatedAt !== null && Date.now() - Date.parse(state.updatedAt) > STALE_AFTER_MS;
   const notes = [
     stale ? "selection is stale" : null,
-    runtime.lastRefreshFailed ? (runtime.lastError ?? "last refresh failed") : null,
+    state.lastRefreshFailed ? (state.lastError ?? "last refresh failed") : null,
     failing.length ? `${failing.length} source${failing.length === 1 ? "" : "s"} failing: ${failing.map((source) => source.name).join(", ")}` : null,
     state.curation === "fallback" && state.agent?.error && state.agent.error !== "agent_off" ? `AI curation unavailable (${state.agent.error}); showing the newest items` : null,
   ].filter(Boolean);
-  const degraded = stale || runtime.lastRefreshFailed || failing.length > 0;
+  const degraded = stale || state.lastRefreshFailed === true || failing.length > 0;
   return { status: degraded ? "degraded" : "ok", ...base, ...(notes.length ? { message: notes.join("; ") } : {}) };
 }
 
 /**
- * The current selection, immediately. Starts the loop and, if the selection is due, a refresh in
- * the background; the caller gets what is in memory now and the next poll gets the new one.
+ * The current selection, immediately. If the selection is due, starts a refresh in the background;
+ * the caller gets what is in memory now and a later poll gets the new one.
  */
 export async function getFeed(): Promise<FeedResponse> {
-  runtime.lastRequestAt = Date.now();
   try {
     await load();
   } catch {
     // Start empty.
   }
-  ensureFeedLoop();
-  void refreshFeed();
+  // A screen is watching; the job skips its rounds when none has for a while.
+  inBackground(noteDemand(feedJob.name).then(() => runJob(feedJob)));
   return response();
 }

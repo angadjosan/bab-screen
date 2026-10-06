@@ -21,7 +21,35 @@ type Ok = Extract<CoinFlipView, { status: "ok" }>;
 type Game = NonNullable<Ok["game"]>;
 type Phase = "flip" | "landed" | "leaving";
 
-const cue = (name: "start" | "toss" | "land") => void fetch(`/api/coin-flip/sound?cue=${name}`, { method: "POST" }).catch(() => {});
+const SOUNDS: Partial<Record<"start" | "toss" | "land", string>> = { toss: "/sounds/coin-flip-toss.mp3", land: "/sounds/coin-flip-land.mp3" };
+const sounds = new Map<string, HTMLAudioElement>();
+let playing: HTMLAudioElement | null = null;
+
+/** The audio element for a sound, made (and so loaded) once. */
+function sound(src: string): HTMLAudioElement {
+  let audio = sounds.get(src);
+  if (!audio) {
+    audio = new Audio(src);
+    audio.preload = "auto";
+    sounds.set(src, audio);
+  }
+  return audio;
+}
+
+// The page plays the sounds; the server turns Spotify down around the flip (lib/coin-flip-sound.ts).
+// A browser may refuse to play sound before someone has clicked the page: on the screen, start Chrome
+// with --autoplay-policy=no-user-gesture-required, or click the page once.
+const cue = (name: "start" | "toss" | "land") => {
+  void fetch(`/api/coin-flip/sound?cue=${name}`, { method: "POST" }).catch(() => {});
+  const src = SOUNDS[name];
+  if (!src) return;
+  // The landing cuts the toss off.
+  playing?.pause();
+  const audio = sound(src);
+  audio.currentTime = 0;
+  playing = audio;
+  void audio.play().catch(() => {});
+};
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 const money = (usd: number) => `$${usd.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(usd) ? 0 : 2, maximumFractionDigits: 2 })}`;
 const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
@@ -80,6 +108,11 @@ export function CoinFlip() {
     play();
     const timer = window.setInterval(play, DEMO_EVERY_MS);
     return () => window.clearInterval(timer);
+  }, []);
+
+  // Load the sounds before the first flip needs them.
+  useEffect(() => {
+    for (const src of Object.values(SOUNDS)) if (src) sound(src);
   }, []);
 
   const gameId = game?.id;

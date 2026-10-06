@@ -13,13 +13,13 @@
 //     commodity.
 //
 // Three keyless requests (CoinGecko twice, Hyperliquid, Gate), made on the server at most once
-// every REFRESH_HOURS and kept in .data/token-universe.json. If the sources cannot be reached the
+// every REFRESH_HOURS and kept in token-universe.json in the store (lib/store.ts). If the sources cannot be reached the
 // last list is used; with no list at all there are no newsworthy tokens.
 
 import { FETCH_TIMEOUT_MS, USER_AGENT } from "./feed-sources";
 import { tidy } from "./feed-parse";
 import { GATE_TICKERS_URL, HL_INFO_URL, type Venue } from "./markets";
-import { readJson, writeJson } from "./songs-store";
+import { readJson, writeJson } from "./store";
 
 export type UniverseToken = {
   symbol: string;
@@ -58,10 +58,10 @@ const NOT_A_TOKEN = /\b(tokeni[sz]ed|xstock|stock|shares?|etf|treasury|wrapped|s
 
 type CoinGeckoCoin = { symbol?: unknown; name?: unknown; current_price?: unknown; market_cap_rank?: unknown };
 type Stored = { version: number; builtAt: string; tokens: UniverseToken[] };
-type Runtime = { tokens: UniverseToken[]; builtAt: number; triedAt: number; loaded: Promise<void> | null; building: Promise<void> | null };
+type Runtime = { tokens: UniverseToken[]; builtAt: number; triedAt: number; building: Promise<void> | null };
 
 const globalStore = globalThis as typeof globalThis & { __babTokenUniverse?: Runtime };
-const runtime: Runtime = (globalStore.__babTokenUniverse ??= { tokens: [], builtAt: 0, triedAt: 0, loaded: null, building: null });
+const runtime: Runtime = (globalStore.__babTokenUniverse ??= { tokens: [], builtAt: 0, triedAt: 0, building: null });
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -168,15 +168,14 @@ async function build(): Promise<UniverseToken[]> {
   return tokens;
 }
 
-function load(): Promise<void> {
-  return (runtime.loaded ??= (async () => {
-    const stored = await readJson<Partial<Stored>>(STATE_FILE);
-    if (!stored || stored.version !== STATE_VERSION || !Array.isArray(stored.tokens)) return;
-    const builtAt = Date.parse(String(stored.builtAt));
-    if (!Number.isFinite(builtAt)) return;
-    runtime.tokens = stored.tokens.filter(isToken).slice(0, MAX_TOKENS);
-    runtime.builtAt = builtAt;
-  })());
+/** Takes the stored list when it is newer than the one in memory (another instance may have built it). */
+async function load(): Promise<void> {
+  const stored = await readJson<Partial<Stored>>(STATE_FILE);
+  if (!stored || stored.version !== STATE_VERSION || !Array.isArray(stored.tokens)) return;
+  const builtAt = Date.parse(String(stored.builtAt));
+  if (!Number.isFinite(builtAt) || builtAt <= runtime.builtAt) return;
+  runtime.tokens = stored.tokens.filter(isToken).slice(0, MAX_TOKENS);
+  runtime.builtAt = builtAt;
 }
 
 /**
@@ -184,9 +183,10 @@ function load(): Promise<void> {
  * reached the last list is returned, and null when there has never been one.
  */
 export async function getUniverse(now = Date.now()): Promise<Map<string, UniverseToken> | null> {
-  await load();
-  const due = now - runtime.builtAt > REFRESH_HOURS * 3_600_000 && now - runtime.triedAt > RETRY_MINUTES * 60_000;
-  if (due) {
+  const due = () => now - runtime.builtAt > REFRESH_HOURS * 3_600_000 && now - runtime.triedAt > RETRY_MINUTES * 60_000;
+  // Only asked for inside the feed job, once per run: read the store only when the copy here is old.
+  if (due()) await load();
+  if (due()) {
     runtime.building ??= (async () => {
       runtime.triedAt = Date.now();
       try {
