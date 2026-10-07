@@ -12,6 +12,9 @@ const ACKS: [RegExp, string][] = [
 ];
 const DEFAULT_ACK = "One sec.";
 
+/** Every line quickAck can say, so the voice can have them ready before they are needed. */
+export const ACK_LINES = [...ACKS.map(([, line]) => line), DEFAULT_ACK];
+
 export function quickAck(question: string): string {
   return ACKS.find(([pattern]) => pattern.test(question))?.[1] ?? DEFAULT_ACK;
 }
