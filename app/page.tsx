@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChumCaption, chumAlt, createChumDeck, useChumPhotos, type ChumDeck } from "./Chum";
+import { Clock } from "./Clock";
 import { CoinFlip } from "./CoinFlip";
 import { Events } from "./Events";
 import { Feed } from "./Feed";
@@ -299,6 +300,7 @@ export default function Dashboard() {
       <main className={`dashboard ${focus ? "is-focus" : ""}`}>
         <div className="top-row">
           <img className="brand-logo" src="/bab-logo.svg" alt="Blockchain at Berkeley" width={344} height={311} />
+          <Clock />
           <div className="tape-slot"><TickerTape /></div>
         </div>
         {!focus && (
