@@ -160,6 +160,7 @@ const addDays = (w: Wall, days: number): Wall => wallFromMs(wallMs(midnight(w)) 
 function clean(value: unknown, max: number): string {
   if (typeof value !== "string") return "";
   const text = value
+    // eslint-disable-next-line no-control-regex -- matching control characters is the point: calendar text is untrusted.
     .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -288,9 +289,30 @@ export function parseCalendar(text: string, options: ParseOptions): { events: Oc
   };
 
   const components = root.getAllSubcomponents("vevent");
-  const uidOf = (component: IcalComponent) => clean(component.getFirstPropertyValue("uid"), 400);
+  const replaced = replacedInstances(components, calendarZone);
+  const context: ExpandContext = { calendarZone, displayZone, from: options.from, to: options.to, replaced, keep };
+  for (const component of components) skipped += expandEvent(component, context);
 
-  // Instances that have their own VEVENT (moved, renamed or cancelled) are taken from there, never from the rule.
+  const events = [...results.values()].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.title.localeCompare(b.title));
+  return { events, skipped };
+}
+
+type IcalRecur = InstanceType<typeof ICAL.Recur>;
+
+type ExpandContext = {
+  calendarZone: string;
+  displayZone: string;
+  from: number;
+  to: number;
+  /** Keys of the instances that have their own VEVENT, by UID. */
+  replaced: Map<string, Set<string>>;
+  keep: (item: Occurrence) => void;
+};
+
+const uidOf = (component: IcalComponent) => clean(component.getFirstPropertyValue("uid"), 400);
+
+/** Instances that have their own VEVENT (moved, renamed or cancelled) are taken from there, never from the rule. */
+function replacedInstances(components: IcalComponent[], calendarZone: string): Map<string, Set<string>> {
   const replaced = new Map<string, Set<string>>();
   for (const component of components) {
     const original = firstStamp(component, "recurrence-id", calendarZone);
@@ -300,82 +322,99 @@ export function parseCalendar(text: string, options: ParseOptions): { events: Oc
     for (const key of stampKeys(original)) keys.add(key);
     replaced.set(uid, keys);
   }
+  return replaced;
+}
 
-  for (const component of components) {
-    const start = firstStamp(component, "dtstart", calendarZone);
-    if (!start) {
-      skipped += 1;
-      continue;
-    }
-    if (clean(component.getFirstPropertyValue("status"), 40).toUpperCase() === "CANCELLED") continue;
-    const uid = uidOf(component);
-    const details: Details = {
-      uid,
-      title: clean(component.getFirstPropertyValue("summary"), TITLE_MAX) || "(No title)",
-      location: shortLocation(component.getFirstPropertyValue("location")),
-    };
-    const shape = shapeOf(component, start, calendarZone);
-    const spanMs = shape.allDay ? shape.days * DAY_MS : shape.wallDurationMs;
+function eventDetails(component: IcalComponent, uid: string): Details {
+  return {
+    uid,
+    title: clean(component.getFirstPropertyValue("summary"), TITLE_MAX) || "(No title)",
+    location: shortLocation(component.getFirstPropertyValue("location")),
+  };
+}
 
-    const isOverride = component.hasProperty("recurrence-id");
-    const rules = isOverride ? [] : component.getAllProperties("rrule").map((property) => property.getFirstValue()).filter((rule): rule is InstanceType<typeof ICAL.Recur> => rule instanceof ICAL.Recur);
-    const extra = isOverride ? [] : allStamps(component, "rdate", calendarZone);
-    if (!rules.length && !extra.length) {
-      keep(occurrence(details, start, shape, displayZone));
-      continue;
-    }
+const spanOf = (shape: Shape) => (shape.allDay ? shape.days * DAY_MS : shape.wallDurationMs);
 
-    const gone = new Set<string>(replaced.get(uid));
-    for (const excluded of allStamps(component, "exdate", calendarZone)) for (const key of stampKeys(excluded)) gone.add(key);
-    const emit = (stamp: Stamp) => {
-      if (!instanceKeys(stamp).some((key) => gone.has(key))) keep(occurrence(details, stamp, shape, displayZone));
-    };
+/** The event's RRULEs and RDATEs; none for an instance that overrides one of a recurring event's. */
+function recurrenceOf(component: IcalComponent, calendarZone: string): { rules: IcalRecur[]; extra: Stamp[] } {
+  const isOverride = component.hasProperty("recurrence-id");
+  const rules = isOverride ? [] : component.getAllProperties("rrule").map((property) => property.getFirstValue()).filter((rule): rule is IcalRecur => rule instanceof ICAL.Recur);
+  const extra = isOverride ? [] : allStamps(component, "rdate", calendarZone);
+  return { rules, extra };
+}
 
-    for (const stamp of extra) if (stamp.isDate === start.isDate) emit(stamp);
-    // With only RDATEs the start itself is an instance; a rule yields it on its own.
-    if (!rules.length) emit(start);
+/** Keys of the instances a recurring event does not have: overridden by their own VEVENT, or listed in EXDATE. */
+function goneInstances(component: IcalComponent, uid: string, context: ExpandContext): Set<string> {
+  const gone = new Set<string>(context.replaced.get(uid));
+  for (const excluded of allStamps(component, "exdate", context.calendarZone)) for (const key of stampKeys(excluded)) gone.add(key);
+  return gone;
+}
 
-    for (const rule of rules) {
-      // UNTIL is checked here, by instant: ical.js would compare it against a time it holds without a zone.
-      const until = isTime(rule.until) ? rule.until : null;
-      const untilStamp: Stamp | null = until
-        ? { isDate: until.isDate, wall: wallOf(until), zone: until.zone?.tzid === "UTC" ? "UTC" : start.zone }
-        : null;
-      const stepping = rule.clone();
-      stepping.until = null;
-      const iterator = stepping.iterator(ICAL.Time.fromData({ year: start.wall.y, month: start.wall.mo, day: start.wall.d, hour: start.wall.h, minute: start.wall.mi, second: start.wall.s, isDate: start.isDate }));
-      let reachedEnd = false;
-      for (let step = 0; step < MAX_RULE_STEPS; step += 1) {
-        const next = iterator.next();
-        if (!next) {
-          reachedEnd = true;
-          break;
-        }
-        const stamp: Stamp = { isDate: start.isDate, wall: wallOf(next), zone: start.zone };
-        // Wall time is within a day of the instant in any zone: enough to pass over the years before the window cheaply.
-        const roughly = wallMs(stamp.wall);
-        if (untilStamp) {
-          const past = stamp.isDate || untilStamp.isDate
-            ? dateNumber(stamp.wall) > dateNumber(untilStamp.wall)
-            : roughly - 2 * DAY_MS > wallMs(untilStamp.wall) || zonedToUtc(stamp.wall, stamp.zone) > zonedToUtc(untilStamp.wall, untilStamp.zone);
-          if (past) {
-            reachedEnd = true;
-            break;
-          }
-        }
-        if (roughly - 2 * DAY_MS >= options.to) {
-          reachedEnd = true;
-          break;
-        }
-        if (roughly + spanMs + 2 * DAY_MS <= options.from) continue;
-        emit(stamp);
-      }
-      if (!reachedEnd) skipped += 1;
-    }
+/** Hands every occurrence of one VEVENT in the window to `context.keep`. Returns how many parts of it were skipped. */
+function expandEvent(component: IcalComponent, context: ExpandContext): number {
+  const start = firstStamp(component, "dtstart", context.calendarZone);
+  if (!start) return 1;
+  if (clean(component.getFirstPropertyValue("status"), 40).toUpperCase() === "CANCELLED") return 0;
+  const uid = uidOf(component);
+  const details = eventDetails(component, uid);
+  const shape = shapeOf(component, start, context.calendarZone);
+  const spanMs = spanOf(shape);
+
+  const { rules, extra } = recurrenceOf(component, context.calendarZone);
+  if (!rules.length && !extra.length) {
+    context.keep(occurrence(details, start, shape, context.displayZone));
+    return 0;
   }
 
-  const events = [...results.values()].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.title.localeCompare(b.title));
-  return { events, skipped };
+  const gone = goneInstances(component, uid, context);
+  const emit = (stamp: Stamp) => {
+    if (!instanceKeys(stamp).some((key) => gone.has(key))) context.keep(occurrence(details, stamp, shape, context.displayZone));
+  };
+
+  for (const stamp of extra) if (stamp.isDate === start.isDate) emit(stamp);
+  // With only RDATEs the start itself is an instance; a rule yields it on its own.
+  if (!rules.length) emit(start);
+
+  let skipped = 0;
+  for (const rule of rules) if (!stepRule(rule, start, spanMs, context, emit)) skipped += 1;
+  return skipped;
+}
+
+/** UNTIL is checked here, by instant: ical.js would compare it against a time it holds without a zone. */
+function untilStampOf(rule: IcalRecur, start: Stamp): Stamp | null {
+  const until = isTime(rule.until) ? rule.until : null;
+  return until
+    ? { isDate: until.isDate, wall: wallOf(until), zone: until.zone?.tzid === "UTC" ? "UTC" : start.zone }
+    : null;
+}
+
+function isPastUntil(stamp: Stamp, roughly: number, untilStamp: Stamp): boolean {
+  return stamp.isDate || untilStamp.isDate
+    ? dateNumber(stamp.wall) > dateNumber(untilStamp.wall)
+    : roughly - 2 * DAY_MS > wallMs(untilStamp.wall) || zonedToUtc(stamp.wall, stamp.zone) > zonedToUtc(untilStamp.wall, untilStamp.zone);
+}
+
+/**
+ * Steps through one RRULE from the event's start and emits its instances in the window. Returns
+ * false when it gave up after MAX_RULE_STEPS without reaching the rule's end or the window's.
+ */
+function stepRule(rule: IcalRecur, start: Stamp, spanMs: number, window: { from: number; to: number }, emit: (stamp: Stamp) => void): boolean {
+  const untilStamp = untilStampOf(rule, start);
+  const stepping = rule.clone();
+  stepping.until = null;
+  const iterator = stepping.iterator(ICAL.Time.fromData({ year: start.wall.y, month: start.wall.mo, day: start.wall.d, hour: start.wall.h, minute: start.wall.mi, second: start.wall.s, isDate: start.isDate }));
+  for (let step = 0; step < MAX_RULE_STEPS; step += 1) {
+    const next = iterator.next();
+    if (!next) return true;
+    const stamp: Stamp = { isDate: start.isDate, wall: wallOf(next), zone: start.zone };
+    // Wall time is within a day of the instant in any zone: enough to pass over the years before the window cheaply.
+    const roughly = wallMs(stamp.wall);
+    if (untilStamp && isPastUntil(stamp, roughly, untilStamp)) return true;
+    if (roughly - 2 * DAY_MS >= window.to) return true;
+    if (roughly + spanMs + 2 * DAY_MS <= window.from) continue;
+    emit(stamp);
+  }
+  return false;
 }
 
 /** Events that have not ended at `now` and start within the lookahead, soonest first. */

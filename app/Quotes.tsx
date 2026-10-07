@@ -345,10 +345,7 @@ export function QuoteCaption({ quote, now, className, style }: QuoteCaptionProps
   const age = quoteAge(quote.postedAt, now);
   const words = underPicture ? quote.text : null;
   const whoAsHeadline = !words && quote.who;
-  const length = words?.length ?? 0;
-  // A first guess from the length, so the first paint is close; the layout effect below settles it by measuring.
-  const firstStep = words?.includes("\n") ? 2 : 0;
-  const guess = firstStep === 2 || length > 60 ? 2 : length > 22 ? 1 : 0;
+  const { firstStep, guess } = captionGuess(words);
   const quoteRef = useRef<HTMLParagraphElement>(null);
 
   useLayoutEffect(() => {
@@ -379,14 +376,32 @@ export function QuoteCaption({ quote, now, className, style }: QuoteCaptionProps
     <div className={cx(styles.caption, className)} style={style}>
       {words && <p ref={quoteRef} className={cx(styles.captionQuote, CAPTION_STEPS[guess])}><Words text={words} /></p>}
       {whoAsHeadline && <p className={styles.captionWho}>{quote.who}</p>}
-      <div className={styles.meta}>
-        <span className={styles.by}>
-          {words && quote.who && <span className={styles.byWho}>{quote.who}</span>}
-          {words && quote.who && quote.poster && <span className={styles.dot} aria-hidden="true">·</span>}
-          {quote.poster && <span>{words && quote.who ? "quoted by" : "Quoted by"} {quote.poster}</span>}
-        </span>
-        {age && <span className={styles.time}>{age}</span>}
-      </div>
+      {captionMeta(quote, words, age)}
+    </div>
+  );
+}
+
+/**
+ * The caption size to paint first and the one the layout effect starts measuring from. A first guess
+ * from the length, so the first paint is close; the layout effect settles it by measuring.
+ */
+function captionGuess(words: string | null): { firstStep: number; guess: number } {
+  const length = words?.length ?? 0;
+  const firstStep = words?.includes("\n") ? 2 : 0;
+  const guess = firstStep === 2 || length > 60 ? 2 : length > 22 ? 1 : 0;
+  return { firstStep, guess };
+}
+
+/** The caption's last line: who said it (under a picture), who posted it, and how long ago. */
+function captionMeta(quote: Quote, words: string | null, age: string | null) {
+  return (
+    <div className={styles.meta}>
+      <span className={styles.by}>
+        {words && quote.who && <span className={styles.byWho}>{quote.who}</span>}
+        {words && quote.who && quote.poster && <span className={styles.dot} aria-hidden="true">·</span>}
+        {quote.poster && <span>{words && quote.who ? "quoted by" : "Quoted by"} {quote.poster}</span>}
+      </span>
+      {age && <span className={styles.time}>{age}</span>}
     </div>
   );
 }

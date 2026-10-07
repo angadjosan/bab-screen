@@ -97,16 +97,28 @@ async function read(): Promise<NowPlaying> {
   } catch {
     return blank("unavailable", "error");
   }
+  return unreadable(raw) ?? nowPlayingFrom(raw);
+}
+
+/** The reply when Spotify is not running or would not say what it plays, or null when `raw` can be read. */
+function unreadable(raw: Raw): NowPlaying | null {
   if (!raw.running) return blank("not_running");
   if (raw.error) return blank("unavailable", isPermissionError(`${raw.error} ${String(raw.errorNumber)}`) ? "automation_permission" : "error");
   if (raw.trackError && isPermissionError(raw.trackError)) return blank("unavailable", "automation_permission");
+  return null;
+}
 
-  const status: NowPlayingStatus = raw.state === "playing" || raw.state === "paused" ? raw.state : "stopped";
+const playerStatus = (state: string | undefined): NowPlayingStatus => (state === "playing" || state === "paused" ? state : "stopped");
+
+/** Local files, some podcasts and ads have no artwork (or a non-web one). */
+const webArtwork = (artwork: string | null) => (artwork && /^https?:\/\//i.test(artwork) ? artwork.replace(/^http:\/\//i, "https://") : null);
+
+function nowPlayingFrom(raw: Raw): NowPlaying {
+  const status = playerStatus(raw.state);
   const track = raw.track;
   const title = text(track?.name);
   if (!track || !title) return blank("stopped");
 
-  const artwork = text(track.artworkUrl);
   const durationMs = count(track.duration);
   const seconds = count(raw.position);
   const positionMs = seconds === null ? null : Math.round(seconds * 1000);
@@ -115,8 +127,7 @@ async function read(): Promise<NowPlaying> {
     title,
     artists: text(track.artist),
     album: text(track.album),
-    // Local files, some podcasts and ads have no artwork (or a non-web one).
-    artworkUrl: artwork && /^https?:\/\//i.test(artwork) ? artwork.replace(/^http:\/\//i, "https://") : null,
+    artworkUrl: webArtwork(text(track.artworkUrl)),
     durationMs: durationMs && durationMs > 0 ? Math.round(durationMs) : null,
     positionMs: positionMs !== null && durationMs ? Math.min(positionMs, durationMs) : positionMs,
     trackId: text(track.id),

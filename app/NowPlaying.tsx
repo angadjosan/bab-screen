@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { JamView } from "../lib/jam";
 import type { NowPlaying as NowPlayingData } from "../lib/now-playing";
 
@@ -56,6 +56,67 @@ function jamTile(jam: Jam) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** The reply when it is a song to show: playing or paused, with a title. */
+function playingTrack(data: NowPlayingData | "idle" | null): NowPlayingData | null {
+  return data && data !== "idle" && (data.status === "playing" || data.status === "paused") && data.title ? data : null;
+}
+
+function emptyMessage(data: NowPlayingData | "idle" | null): string {
+  if (data === null) return "";
+  if (data !== "idle" && data.status === "unavailable") {
+    return data.reason === "automation_permission"
+      ? "To show the song, allow this app to control Spotify in System Settings > Privacy & Security > Automation"
+      : "Spotify is not responding";
+  }
+  return "Nothing playing";
+}
+
+type TrackTile = {
+  track: NowPlayingData;
+  playing: boolean;
+  durationMs: number | null;
+  trackId: string | null;
+  badArtwork: string | null;
+  fill: RefObject<HTMLSpanElement | null>;
+  onBadArtwork: (url: string) => void;
+};
+
+/** The song. A plain function like jamTile, so its <section> stays the same DOM element as the Jam's. */
+function trackTile({ track, playing, durationMs, trackId, badArtwork, fill, onBadArtwork }: TrackTile) {
+  const artwork = track.artworkUrl && track.artworkUrl !== badArtwork ? track.artworkUrl : null;
+  return (
+    <section className={`now-playing ${playing ? "" : "is-paused"} ${track.queuedBy ? "has-credit" : ""}`} aria-label="Now playing">
+      <div className="now-playing-art">
+        {artwork && <img key={artwork} src={artwork} alt={track.album ? `Cover of ${track.album}` : ""} onError={() => onBadArtwork(artwork)} />}
+      </div>
+      {trackBody(track, playing, durationMs, trackId, fill)}
+    </section>
+  );
+}
+
+function trackBody(track: NowPlayingData, playing: boolean, durationMs: number | null, trackId: string | null, fill: RefObject<HTMLSpanElement | null>) {
+  return (
+    <div className="now-playing-body">
+      <p className="now-playing-title">{track.title}</p>
+      <div className="now-playing-meta">
+        <span className="now-playing-artist">{track.artists ?? track.album ?? ""}</span>
+        {!playing && <span className="now-playing-state">Paused</span>}
+      </div>
+      {/* Only for a track that came in through the Slack song-request channel. */}
+      {track.queuedBy && (
+        <p className="now-playing-credit">
+          Queued by <span className="now-playing-credit-name">{track.queuedBy}</span>
+        </p>
+      )}
+      {durationMs && (
+        <div className="now-playing-bar" aria-hidden="true">
+          <span key={trackId} ref={fill} className="now-playing-fill" />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -129,7 +190,7 @@ export function NowPlaying() {
     return () => window.clearTimeout(timer);
   }, [badArtwork]);
 
-  const track = data && data !== "idle" && (data.status === "playing" || data.status === "paused") && data.title ? data : null;
+  const track = playingTrack(data);
   const playing = track?.status === "playing";
   const durationMs = track?.durationMs ?? null;
   const trackId = track ? track.trackId ?? track.title : null;
@@ -152,44 +213,12 @@ export function NowPlaying() {
   if (jam) return jamTile(jam);
 
   if (!track) {
-    const message =
-      data === null ? "" :
-      data !== "idle" && data.status === "unavailable"
-        ? data.reason === "automation_permission"
-          ? "To show the song, allow this app to control Spotify in System Settings > Privacy & Security > Automation"
-          : "Spotify is not responding"
-        : "Nothing playing";
     return (
       <section className="now-playing is-empty" aria-label="Now playing">
-        <p className="now-playing-note">{message}</p>
+        <p className="now-playing-note">{emptyMessage(data)}</p>
       </section>
     );
   }
 
-  const artwork = track.artworkUrl && track.artworkUrl !== badArtwork ? track.artworkUrl : null;
-  return (
-    <section className={`now-playing ${playing ? "" : "is-paused"} ${track.queuedBy ? "has-credit" : ""}`} aria-label="Now playing">
-      <div className="now-playing-art">
-        {artwork && <img key={artwork} src={artwork} alt={track.album ? `Cover of ${track.album}` : ""} onError={() => setBadArtwork(artwork)} />}
-      </div>
-      <div className="now-playing-body">
-        <p className="now-playing-title">{track.title}</p>
-        <div className="now-playing-meta">
-          <span className="now-playing-artist">{track.artists ?? track.album ?? ""}</span>
-          {!playing && <span className="now-playing-state">Paused</span>}
-        </div>
-        {/* Only for a track that came in through the Slack song-request channel. */}
-        {track.queuedBy && (
-          <p className="now-playing-credit">
-            Queued by <span className="now-playing-credit-name">{track.queuedBy}</span>
-          </p>
-        )}
-        {durationMs && (
-          <div className="now-playing-bar" aria-hidden="true">
-            <span key={trackId} ref={fill} className="now-playing-fill" />
-          </div>
-        )}
-      </div>
-    </section>
-  );
+  return trackTile({ track, playing, durationMs, trackId, badArtwork, fill, onBadArtwork: setBadArtwork });
 }

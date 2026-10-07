@@ -95,6 +95,7 @@ async function searchClub(state: State, now: number): Promise<FeedItem[]> {
   const xml = await fetchPage(CLUB_SEARCH.url);
   if (!xml) return state.searchItems;
   state.searchedAt = now;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to leave the categories out.
   state.searchItems = parseFeed(xml, CLUB_SEARCH.name, now).entries.map(({ categories: _categories, ...item }) => item);
   return state.searchItems;
 }

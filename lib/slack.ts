@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { describeSpot } from "./slack-users";
+import { describeSpot, type SpotDescription } from "./slack-users";
 
 /** How many recent image messages /api/spot returns in `spots` (newest first). */
 export const MAX_SPOTS = 6;
@@ -191,6 +191,63 @@ type Fetched = { value: SpotResult; ttlMs: number };
 let cachedSpot: { value: SpotResult; expiresAt: number } | undefined;
 let inFlight: Promise<SpotResult> | undefined;
 
+type SpotMatch = { message: SlackMessage; ts: string; imageUrl: string };
+
+/** conversations.history is newest first, so the first MAX_SPOTS matches are the latest ones. */
+function spotMatches(messages: SlackMessage[], spotbotId: string | undefined): SpotMatch[] {
+  const matches: SpotMatch[] = [];
+  for (const message of messages) {
+    if (matches.length >= MAX_SPOTS) break;
+    const match = spotMatch(message, spotbotId);
+    if (match) matches.push(match);
+  }
+  return matches;
+}
+
+/** The message as a spot, or null when it is not Spotbot's or has no image the screen can show. */
+function spotMatch(message: SlackMessage, spotbotId: string | undefined): SpotMatch | null {
+  if (spotbotId && message.user !== spotbotId && message.bot_id !== spotbotId) return null;
+  const fileId = imageFile(message)?.id;
+  const imageUrl = fileId ? signedImagePath(fileId) : externalImageUrl(message);
+  if (!message.ts || !imageUrl) return null;
+  return { message, ts: message.ts, imageUrl };
+}
+
+function spotFrom({ ts, imageUrl }: SpotMatch, description: SpotDescription, channel: string): Spot {
+  const timestamp = Number(ts);
+  const { spotter, spotted, text } = description;
+  return {
+    id: ts,
+    imageUrl,
+    text,
+    spotter,
+    spotted,
+    postedAt: Number.isFinite(timestamp) ? new Date(timestamp * 1000).toISOString() : null,
+    permalink: `https://app.slack.com/archives/${encodeURIComponent(channel)}/p${ts.replace(".", "")}`,
+  };
+}
+
+function latestSpot(spots: Spot[], matches: SpotMatch[]): Fetched {
+  const latest = spots[0];
+  const latestMessage = matches[0].message;
+  // A human poster without a name means the lookup failed (scope, rate limit, network): retry sooner.
+  const namesMissing = matches.some(({ message }, index) => message.user && !spots[index].spotter);
+  return {
+    ttlMs: namesMissing ? RETRY_TTL_MS : OK_TTL_MS,
+    value: {
+      status: "ok",
+      imageUrl: latest.imageUrl,
+      text: latest.text,
+      permalink: latest.permalink,
+      postedAt: latest.postedAt,
+      author: latest.spotter || latestMessage.username || latestMessage.user || latestMessage.bot_id || "Spotbot",
+      spotter: latest.spotter,
+      spotted: latest.spotted,
+      spots,
+    },
+  };
+}
+
 async function fetchLatestSpot(): Promise<Fetched> {
   const channel = process.env.SLACK_CHANNEL_ID;
   if (!process.env.SLACK_BOT_TOKEN || !channel) {
@@ -211,16 +268,7 @@ async function fetchLatestSpot(): Promise<Fetched> {
     });
     const spotbotId = process.env.SLACK_SPOTBOT_USER_ID;
 
-    // conversations.history is newest first, so the first MAX_SPOTS matches are the latest ones.
-    const matches: Array<{ message: SlackMessage; ts: string; imageUrl: string }> = [];
-    for (const message of payload.messages ?? []) {
-      if (matches.length >= MAX_SPOTS) break;
-      if (spotbotId && message.user !== spotbotId && message.bot_id !== spotbotId) continue;
-      const fileId = imageFile(message)?.id;
-      const imageUrl = fileId ? signedImagePath(fileId) : externalImageUrl(message);
-      if (!message.ts || !imageUrl) continue;
-      matches.push({ message, ts: message.ts, imageUrl });
-    }
+    const matches = spotMatches(payload.messages ?? [], spotbotId);
     if (matches.length === 0) {
       return {
         ttlMs: OK_TTL_MS,
@@ -234,38 +282,8 @@ async function fetchLatestSpot(): Promise<Fetched> {
 
     // describeSpot never throws; names it can't resolve come back as null / omitted.
     const descriptions = await Promise.all(matches.map(({ message }) => describeSpot(message)));
-    const spots: Spot[] = matches.map(({ ts, imageUrl }, index) => {
-      const timestamp = Number(ts);
-      const { spotter, spotted, text } = descriptions[index];
-      return {
-        id: ts,
-        imageUrl,
-        text,
-        spotter,
-        spotted,
-        postedAt: Number.isFinite(timestamp) ? new Date(timestamp * 1000).toISOString() : null,
-        permalink: `https://app.slack.com/archives/${encodeURIComponent(channel)}/p${ts.replace(".", "")}`,
-      };
-    });
-
-    const latest = spots[0];
-    const latestMessage = matches[0].message;
-    // A human poster without a name means the lookup failed (scope, rate limit, network): retry sooner.
-    const namesMissing = matches.some(({ message }, index) => message.user && !spots[index].spotter);
-    return {
-      ttlMs: namesMissing ? RETRY_TTL_MS : OK_TTL_MS,
-      value: {
-        status: "ok",
-        imageUrl: latest.imageUrl,
-        text: latest.text,
-        permalink: latest.permalink,
-        postedAt: latest.postedAt,
-        author: latest.spotter || latestMessage.username || latestMessage.user || latestMessage.bot_id || "Spotbot",
-        spotter: latest.spotter,
-        spotted: latest.spotted,
-        spots,
-      },
-    };
+    const spots: Spot[] = matches.map((match, index) => spotFrom(match, descriptions[index], channel));
+    return latestSpot(spots, matches);
   } catch (error) {
     const code = error instanceof SlackApiError ? error.code : "network_error";
     return {

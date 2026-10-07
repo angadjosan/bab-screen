@@ -226,7 +226,6 @@ function runCli(file: string, args: string[], options: { cwd: string; input: str
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { cwd: options.cwd, stdio: ["pipe", "pipe", "ignore"], env: cliEnv(options.env) });
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const chunks: Buffer[] = [];
     let size = 0;
     const fail = (code: string) => {
@@ -236,7 +235,7 @@ function runCli(file: string, args: string[], options: { cwd: string; input: str
       child.kill("SIGKILL");
       reject(new AgentError(code));
     };
-    timer = setTimeout(() => fail("cli_timeout"), options.timeoutMs);
+    const timer = setTimeout(() => fail("cli_timeout"), options.timeoutMs);
     child.on("error", (error: NodeJS.ErrnoException) => fail(error.code === "ENOENT" ? "cli_not_found" : "cli_spawn_failed"));
     child.stdout.on("data", (chunk: Buffer) => {
       size += chunk.length;

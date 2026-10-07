@@ -86,24 +86,35 @@ async function readPool(channel: string): Promise<Match[]> {
   let cursor = "";
   for (let page = 0; page < MAX_PAGES; page += 1) {
     if (page > 0) await sleep(PAGE_GAP_MS);
-    let payload: { messages?: SlackMessage[]; has_more?: boolean; response_metadata?: { next_cursor?: string } };
+    let payload: HistoryPage;
     try {
-      payload = await slackGet("conversations.history", { channel, oldest, limit: String(PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+      payload = await historyPage(channel, oldest, cursor);
     } catch (error) {
       if (page === 0) throw error;
       break;
     }
-    for (const message of payload.messages ?? []) {
-      if (!isPost(message)) continue;
-      for (const file of message.files ?? []) {
-        if (!file.id || !isImageFile(file) || (file.mode && file.mode !== "hosted")) continue;
-        matches.push({ message, ts: message.ts as string, fileId: file.id });
-      }
-    }
+    matches.push(...(payload.messages ?? []).flatMap(postPhotos));
     cursor = payload.response_metadata?.next_cursor ?? "";
     if (!payload.has_more || !cursor) break;
   }
   return matches;
+}
+
+type HistoryPage = { messages?: SlackMessage[]; has_more?: boolean; response_metadata?: { next_cursor?: string } };
+
+function historyPage(channel: string, oldest: string, cursor: string): Promise<HistoryPage> {
+  return slackGet("conversations.history", { channel, oldest, limit: String(PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+}
+
+/** The pictures Slack hosts in a photo post; none for any other message. */
+function postPhotos(message: SlackMessage): Match[] {
+  if (!isPost(message)) return [];
+  const photos: Match[] = [];
+  for (const file of message.files ?? []) {
+    if (!file.id || !isImageFile(file) || (file.mode && file.mode !== "hosted")) continue;
+    photos.push({ message, ts: message.ts as string, fileId: file.id });
+  }
+  return photos;
 }
 
 let pool: { channel: string; readAt: number; matches: Match[] } | undefined;

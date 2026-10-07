@@ -256,55 +256,74 @@ async function api<T>(
   const url = new URL(`${API_URL}${path}`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
-  let response: Response | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    // Second pass only happens after a 401: the stored access token was stale, so force a refresh.
-    const token = await accessToken(attempt === 1);
-    try {
-      response = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        cache: "no-store",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (error) {
-      throw new SpotifyError(failureCode(error));
-    }
-    if (response.status !== 401) break;
-  }
-  if (!response) throw new SpotifyError("network_error");
+  const response = await sendWithFreshToken(url, method, body);
 
   if (response.ok) {
     if (response.status === 204) return null;
     // Player commands answer 200/204 with an empty or non-JSON body.
     return (await response.json().catch(() => null)) as T | null;
   }
+  throw await responseError(response);
+}
 
+async function sendWithFreshToken(url: URL, method: "GET" | "POST", body: unknown): Promise<Response> {
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Second pass only happens after a 401: the stored access token was stale, so force a refresh.
+    const token = await accessToken(attempt === 1);
+    response = await sendApiRequest(url, method, token, body);
+    if (response.status !== 401) break;
+  }
+  if (!response) throw new SpotifyError("network_error");
+  return response;
+}
+
+async function sendApiRequest(url: URL, method: "GET" | "POST", token: string, body: unknown): Promise<Response> {
+  try {
+    return await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new SpotifyError(failureCode(error));
+  }
+}
+
+/** The error for a response that is not ok. A 429 also pauses every call for as long as Spotify asks. */
+async function responseError(response: Response): Promise<SpotifyError> {
   const payload = (await response.json().catch(() => ({}))) as ApiError;
   const reason = payload.error?.reason ?? "";
   const message = payload.error?.message ?? null;
 
-  if (response.status === 429) {
-    const seconds = Number(response.headers.get("retry-after"));
-    const pause = Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000, MAX_RATE_LIMIT_PAUSE_MS);
-    shared.pausedUntil = Math.max(shared.pausedUntil, Date.now() + pause);
-    throw new SpotifyError("rate_limited", message, pause);
-  }
-  if (response.status === 401) throw new SpotifyError("login_expired", message);
-  if (response.status === 403) {
-    if (/insufficient client scope/i.test(message ?? "")) throw new SpotifyError("insufficient_scope", message);
-    const premium = reason === "PREMIUM_REQUIRED" || /premium/i.test(message ?? "");
-    throw new SpotifyError(premium ? "premium_required" : "forbidden", message);
-  }
-  if (response.status === 404) {
-    const noDevice = reason === "NO_ACTIVE_DEVICE" || /no active device|device not found/i.test(message ?? "");
-    throw new SpotifyError(noDevice ? "no_active_device" : "not_found", message);
-  }
-  throw new SpotifyError(`http_${response.status}`, message);
+  if (response.status === 429) return rateLimitError(response, message);
+  if (response.status === 401) return new SpotifyError("login_expired", message);
+  if (response.status === 403) return forbiddenError(reason, message);
+  if (response.status === 404) return notFoundError(reason, message);
+  return new SpotifyError(`http_${response.status}`, message);
+}
+
+function rateLimitError(response: Response, message: string | null): SpotifyError {
+  const seconds = Number(response.headers.get("retry-after"));
+  const pause = Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000, MAX_RATE_LIMIT_PAUSE_MS);
+  shared.pausedUntil = Math.max(shared.pausedUntil, Date.now() + pause);
+  return new SpotifyError("rate_limited", message, pause);
+}
+
+function forbiddenError(reason: string, message: string | null): SpotifyError {
+  if (/insufficient client scope/i.test(message ?? "")) return new SpotifyError("insufficient_scope", message);
+  const premium = reason === "PREMIUM_REQUIRED" || /premium/i.test(message ?? "");
+  return new SpotifyError(premium ? "premium_required" : "forbidden", message);
+}
+
+function notFoundError(reason: string, message: string | null): SpotifyError {
+  const noDevice = reason === "NO_ACTIVE_DEVICE" || /no active device|device not found/i.test(message ?? "");
+  return new SpotifyError(noDevice ? "no_active_device" : "not_found", message);
 }
 
 type ApiTrack = { id?: string; name?: string; type?: string; artists?: Array<{ name?: string }> };

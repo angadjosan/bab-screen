@@ -28,6 +28,7 @@ import {
   spotifyConnection,
   type SpotifyConnection,
   type Track,
+  type TrackLink,
 } from "./spotify";
 
 const STATE_FILE = "songs.json";
@@ -309,30 +310,40 @@ async function slackCall<T>(method: string, params: Record<string, string>, post
   const url = new URL(`https://slack.com/api/${method}`);
   if (!post) for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: post ? "POST" : "GET",
-      headers: post
-        ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" }
-        : { Authorization: `Bearer ${token}` },
-      body: post ? JSON.stringify(params) : undefined,
-      cache: "no-store",
-      signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-    });
-  } catch (error) {
-    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    throw new SlackError(timedOut ? "timeout" : "network_error");
-  }
-  if (response.status === 429) {
-    const seconds = Number(response.headers.get("retry-after"));
-    throw new SlackError("rate_limited", null, Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null);
-  }
+  const response = await sendSlackRequest(url, token, params, post);
+  if (response.status === 429) throw new SlackError("rate_limited", null, retryAfterMs(response));
   if (!response.ok) throw new SlackError(`http_${response.status}`);
 
   const payload = (await response.json()) as T & { ok: boolean; error?: string; needed?: string };
   if (!payload.ok) throw new SlackError(payload.error ?? "unknown", payload.needed ?? null);
   return payload;
+}
+
+async function sendSlackRequest(url: URL, token: string, params: Record<string, string>, post: boolean): Promise<Response> {
+  try {
+    return await fetch(url, slackRequestInit(token, params, post));
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    throw new SlackError(timedOut ? "timeout" : "network_error");
+  }
+}
+
+function slackRequestInit(token: string, params: Record<string, string>, post: boolean): RequestInit {
+  return {
+    method: post ? "POST" : "GET",
+    headers: post
+      ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" }
+      : { Authorization: `Bearer ${token}` },
+    body: post ? JSON.stringify(params) : undefined,
+    cache: "no-store",
+    signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+  };
+}
+
+/** Slack's Retry-After in milliseconds, or null when it did not give a usable one. */
+function retryAfterMs(response: Response): number | null {
+  const seconds = Number(response.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
 }
 
 function slackHelp(code: string | null, channel: string | null): string | null {
@@ -412,88 +423,119 @@ async function botUserId(): Promise<string | null> {
 async function pollSlack(state: SongsState, channel: string): Promise<boolean> {
   if (Date.now() < runtime.slackRetryAt) return false;
   try {
-    if (state.cursor === null) {
-      // First ever read: remember where the channel is now and do not touch the backlog.
-      const payload = await slackCall<{ messages?: SlackMessage[] }>("conversations.history", { channel, limit: "1" });
-      state.cursor = payload.messages?.[0]?.ts ?? "0";
-    } else {
-      const payload = await slackCall<{ messages?: SlackMessage[] }>("conversations.history", {
-        channel,
-        oldest: state.cursor,
-        inclusive: "false",
-        limit: "100",
-      });
-      // Newest first from Slack; handle oldest first so requests are added in the order asked.
-      const fresh = (payload.messages ?? [])
-        .filter((message): message is SlackMessage & { ts: string } => Boolean(message.ts) && compareTs(message.ts as string, state.cursor as string) > 0)
-        .sort((a, b) => compareTs(a.ts, b.ts));
-
-      for (const message of fresh) {
-        // Asked before the cursor moves: if Slack cannot be reached, the next poll starts at this message again.
-        const jam =
-          isCandidate(message) && looksLikeJamTrigger(message.text) ? parseJamTrigger(message.text, await botUserId()) : null;
-        // A message with a track link is a song request even if it says "play".
-        const command =
-          !jam && isCandidate(message) && looksLikeCommand(message.text) && findTrackLinks(message.text ?? "").length === 0
-            ? parseCommand(message.text, await botUserId())
-            : null;
-        state.cursor = message.ts;
-        if (!isCandidate(message)) continue;
-        if (command) {
-          await runCommand(command, message.user);
-          continue;
-        }
-        if (jam) {
-          // Never a song request as well: a Jam invite can be a spotify.link short link, which findTrackLinks would pick up.
-          await recordJamTrigger({ link: jam.link, postedAtMs: Number(message.ts) * 1000, user: message.user });
-          continue;
-        }
-        if (state.pending.some((request) => request.ts === message.ts) || state.log.some((result) => result.id.split("#")[0] === message.ts)) {
-          continue;
-        }
-        const links = findTrackLinks(message.text ?? "").slice(0, MAX_TRACKS_PER_MESSAGE);
-        if (links.length === 0) {
-          state.ignored += 1;
-          continue;
-        }
-        const tooOld = Date.now() - Number(message.ts) * 1000 > maxAgeMs();
-        const userName = tooOld ? null : await resolveUserName(message.user);
-        links.forEach((link, position) => {
-          const request: PendingRequest = {
-            id: position === 0 ? message.ts : `${message.ts}#${position + 1}`,
-            ts: message.ts,
-            user: message.user,
-            userName,
-            text: displayText(message.text ?? ""),
-            postedAt: tsToIso(message.ts),
-            ...link,
-            attempts: 0,
-            nextAttemptAt: 0,
-            waitingFor: null,
-            detail: null,
-          };
-          if (tooOld) {
-            // Posted while the server was off, long enough ago that playing it now would be a surprise.
-            finish(state, request, { status: "expired", reason: "too_old", outcome: "Posted too long ago to act on." });
-          } else if (state.pending.length >= MAX_PENDING) {
-            finish(state, request, { status: "failed", reason: "too_many_pending", outcome: "Too many requests are waiting." });
-          } else {
-            state.pending.push(request);
-          }
-        });
-      }
-    }
+    if (state.cursor === null) await startAtNewestMessage(state, channel);
+    else await readNewMessages(state, channel);
     state.lastPollAt = new Date().toISOString();
     runtime.slackCanRead = true;
     runtime.slackError = null;
     return true;
   } catch (error) {
-    const slackError = error instanceof SlackError ? error : new SlackError("unknown");
-    runtime.slackCanRead = false;
-    runtime.slackError = slackError.needed ? `${slackError.code} (needs ${slackError.needed})` : slackError.code;
-    runtime.slackRetryAt = Date.now() + Math.max(SLACK_ERROR_BACKOFF_MS, slackError.retryAfterMs ?? 0);
+    recordSlackFailure(error);
     return false;
   }
+}
+
+/** First ever read: remember where the channel is now and do not touch the backlog. */
+async function startAtNewestMessage(state: SongsState, channel: string): Promise<void> {
+  const payload = await slackCall<{ messages?: SlackMessage[] }>("conversations.history", { channel, limit: "1" });
+  state.cursor = payload.messages?.[0]?.ts ?? "0";
+}
+
+async function readNewMessages(state: SongsState, channel: string): Promise<void> {
+  const payload = await slackCall<{ messages?: SlackMessage[] }>("conversations.history", {
+    channel,
+    oldest: state.cursor as string,
+    inclusive: "false",
+    limit: "100",
+  });
+  // Newest first from Slack; handle oldest first so requests are added in the order asked.
+  const fresh = (payload.messages ?? [])
+    .filter((message): message is SlackMessage & { ts: string } => Boolean(message.ts) && compareTs(message.ts as string, state.cursor as string) > 0)
+    .sort((a, b) => compareTs(a.ts, b.ts));
+
+  for (const message of fresh) await handleMessage(state, message);
+}
+
+function isJamRequest(message: SlackMessage): boolean {
+  return isCandidate(message) && looksLikeJamTrigger(message.text);
+}
+
+/** A message with a track link is a song request even if it says "play". */
+function isCommandRequest(message: SlackMessage): boolean {
+  return isCandidate(message) && looksLikeCommand(message.text) && findTrackLinks(message.text ?? "").length === 0;
+}
+
+async function handleMessage(state: SongsState, message: SlackMessage & { ts: string }): Promise<void> {
+  // Asked before the cursor moves: if Slack cannot be reached, the next poll starts at this message again.
+  const jam = isJamRequest(message) ? parseJamTrigger(message.text, await botUserId()) : null;
+  const command = !jam && isCommandRequest(message) ? parseCommand(message.text, await botUserId()) : null;
+  state.cursor = message.ts;
+  if (!isCandidate(message)) return;
+  if (command) {
+    await runCommand(command, message.user);
+    return;
+  }
+  if (jam) {
+    // Never a song request as well: a Jam invite can be a spotify.link short link, which findTrackLinks would pick up.
+    await recordJamTrigger({ link: jam.link, postedAtMs: Number(message.ts) * 1000, user: message.user });
+    return;
+  }
+  if (isAlreadyHandled(state, message.ts)) return;
+  await addTrackRequests(state, message);
+}
+
+function isAlreadyHandled(state: SongsState, ts: string): boolean {
+  return state.pending.some((request) => request.ts === ts) || state.log.some((result) => result.id.split("#")[0] === ts);
+}
+
+async function addTrackRequests(state: SongsState, message: SlackMessage & { ts: string; user: string }): Promise<void> {
+  const links = findTrackLinks(message.text ?? "").slice(0, MAX_TRACKS_PER_MESSAGE);
+  if (links.length === 0) {
+    state.ignored += 1;
+    return;
+  }
+  const tooOld = Date.now() - Number(message.ts) * 1000 > maxAgeMs();
+  const userName = tooOld ? null : await resolveUserName(message.user);
+  links.forEach((link, position) => admitRequest(state, pendingRequest(message, link, position, userName), tooOld));
+}
+
+function pendingRequest(
+  message: SlackMessage & { ts: string; user: string },
+  link: TrackLink,
+  position: number,
+  userName: string | null,
+): PendingRequest {
+  return {
+    id: position === 0 ? message.ts : `${message.ts}#${position + 1}`,
+    ts: message.ts,
+    user: message.user,
+    userName,
+    text: displayText(message.text ?? ""),
+    postedAt: tsToIso(message.ts),
+    ...link,
+    attempts: 0,
+    nextAttemptAt: 0,
+    waitingFor: null,
+    detail: null,
+  };
+}
+
+function admitRequest(state: SongsState, request: PendingRequest, tooOld: boolean): void {
+  if (tooOld) {
+    // Posted while the server was off, long enough ago that playing it now would be a surprise.
+    finish(state, request, { status: "expired", reason: "too_old", outcome: "Posted too long ago to act on." });
+  } else if (state.pending.length >= MAX_PENDING) {
+    finish(state, request, { status: "failed", reason: "too_many_pending", outcome: "Too many requests are waiting." });
+  } else {
+    state.pending.push(request);
+  }
+}
+
+function recordSlackFailure(error: unknown): void {
+  const slackError = error instanceof SlackError ? error : new SlackError("unknown");
+  runtime.slackCanRead = false;
+  runtime.slackError = slackError.needed ? `${slackError.code} (needs ${slackError.needed})` : slackError.code;
+  runtime.slackRetryAt = Date.now() + Math.max(SLACK_ERROR_BACKOFF_MS, slackError.retryAfterMs ?? 0);
 }
 
 async function replyInThread(request: PendingRequest, text: string): Promise<boolean> {
@@ -771,24 +813,22 @@ function block(context: RunContext, request: PendingRequest, code: string, detai
   request.detail = detail ?? spotifyHelp(code);
 }
 
+function blockOrBackoff(context: RunContext, request: PendingRequest, code: string, detail: string | null): void {
+  if (BLOCKING.has(code)) block(context, request, code, detail);
+  else backoff(request, code, detail);
+}
+
 async function deliver(state: SongsState, request: PendingRequest, track: Track, context: RunContext): Promise<void> {
   const label = trackLabel(track);
 
   if (context.mode !== "queue") {
     const step = await deliverToPlaylist(state, request, track);
     if (!step.done) {
-      if (BLOCKING.has(step.code)) block(context, request, step.code, step.detail);
-      else backoff(request, step.code, step.detail);
+      blockOrBackoff(context, request, step.code, step.detail);
       return;
     }
     if (context.mode === "playlist") {
-      await finishAndReply(
-        state,
-        request,
-        request.playlist === "duplicate"
-          ? { status: "duplicate", reason: "already_in_playlist", outcome: `Already in the playlist: ${label}` }
-          : { status: "added", reason: null, outcome: `Added to the playlist: ${label}` },
-      );
+      await finishAndReply(state, request, playlistOutcome(request, label));
       return;
     }
   }
@@ -797,53 +837,76 @@ async function deliver(state: SongsState, request: PendingRequest, track: Track,
 
   if (context.mode === "both") {
     // The playlist step is already done, so the request is finished whatever the queue says.
-    const inPlaylist = request.playlist === "duplicate" ? "Already in the playlist" : "Added to the playlist";
-    await finishAndReply(
-      state,
-      request,
-      queued.done
-        ? { status: "queued", reason: null, outcome: `${inPlaylist} and queued: ${label}`, queue: "queued" }
-        : {
-            status: request.playlist === "duplicate" ? "duplicate" : "added",
-            reason: null,
-            outcome: `${inPlaylist}: ${label} (not queued: ${queued.code.replace(/_/g, " ")})`,
-            queue: queued.code,
-          },
-    );
+    await finishAndReply(state, request, playlistAndQueueOutcome(request, label, queued));
     return;
   }
+  await settleQueueStep(state, request, label, queued, context);
+}
 
-  if (queued.done) {
-    await finishAndReply(state, request, { status: "queued", reason: null, outcome: `Queued: ${label}`, queue: "queued" });
-    return;
-  }
-  if (queued.code === "interrupted") {
-    await finishAndReply(state, request, {
+function playlistOutcome(request: PendingRequest, label: string): Outcome {
+  return request.playlist === "duplicate"
+    ? { status: "duplicate", reason: "already_in_playlist", outcome: `Already in the playlist: ${label}` }
+    : { status: "added", reason: null, outcome: `Added to the playlist: ${label}` };
+}
+
+function playlistAndQueueOutcome(request: PendingRequest, label: string, queued: StepResult): Outcome {
+  const inPlaylist = request.playlist === "duplicate" ? "Already in the playlist" : "Added to the playlist";
+  return queued.done
+    ? { status: "queued", reason: null, outcome: `${inPlaylist} and queued: ${label}`, queue: "queued" }
+    : {
+        status: request.playlist === "duplicate" ? "duplicate" : "added",
+        reason: null,
+        outcome: `${inPlaylist}: ${label} (not queued: ${queued.code.replace(/_/g, " ")})`,
+        queue: queued.code,
+      };
+}
+
+/** Queue failures that finish the request for good, or null when it may still go through later. */
+function finalQueueFailure(code: string, label: string): Outcome | null {
+  if (code === "interrupted") {
+    return {
       status: "failed",
       reason: "interrupted",
       outcome: `Could not confirm that ${label} was queued; not retried.`,
       queue: "interrupted",
-    });
-    return;
+    };
   }
-  if (queued.code === "not_found" || queued.code === "http_400") {
-    await finishAndReply(state, request, {
+  if (code === "not_found" || code === "http_400") {
+    return {
       status: "failed",
       reason: "unknown_track",
       outcome: "Spotify does not recognise that track link.",
       queue: "unknown_track",
-    });
-    return;
+    };
   }
-  if (queued.code === "premium_required") {
+  if (code === "premium_required") {
     // Retrying the same request cannot help. Later requests are still tried, one call each, so a
     // change of account or plan is noticed without any action here.
-    await finishAndReply(state, request, {
+    return {
       status: "failed",
       reason: "premium_required",
       outcome: `Not queued: ${label}. Spotify only lets Premium accounts add to the queue.`,
       queue: "premium_required",
-    });
+    };
+  }
+  return null;
+}
+
+/** Queue mode: finishes, blocks or backs off the request according to what the queue step said. */
+async function settleQueueStep(
+  state: SongsState,
+  request: PendingRequest,
+  label: string,
+  queued: StepResult,
+  context: RunContext,
+): Promise<void> {
+  if (queued.done) {
+    await finishAndReply(state, request, { status: "queued", reason: null, outcome: `Queued: ${label}`, queue: "queued" });
+    return;
+  }
+  const failure = finalQueueFailure(queued.code, label);
+  if (failure) {
+    await finishAndReply(state, request, failure);
     return;
   }
   if (BLOCKING.has(queued.code)) {
@@ -853,6 +916,9 @@ async function deliver(state: SongsState, request: PendingRequest, track: Track,
   backoff(request, queued.code, queued.detail);
 }
 
+/** What happened to a request this run: still to work on, left alone until later, or out of state.pending. */
+type RequestStep = "continue" | "later" | "removed";
+
 async function processPending(state: SongsState, context: RunContext): Promise<void> {
   let handled = 0;
   // Index loop: finishing a request removes it from state.pending while iterating.
@@ -860,81 +926,107 @@ async function processPending(state: SongsState, context: RunContext): Promise<v
     const request = state.pending[index];
 
     if (Date.now() - Date.parse(request.postedAt) > maxAgeMs()) {
-      const why = request.waitingFor ?? "not_processed_in_time";
-      await finishAndReply(state, request, {
-        status: "expired",
-        reason: why,
-        outcome: `Gave up after waiting (${why.replace(/_/g, " ")}).`,
-      });
+      await expireRequest(state, request);
       index -= 1;
       continue;
     }
     if (context.blocker) {
-      request.waitingFor = context.blocker.code;
-      request.detail = context.blocker.detail ?? spotifyHelp(context.blocker.code);
+      waitForBlocker(request, context.blocker);
       continue;
     }
     if (Date.now() < request.nextAttemptAt) continue;
     if (handled >= MAX_PER_RUN) break;
     handled += 1;
 
-    if (!request.trackId && request.shortLink) {
-      let expanded: string | null;
-      try {
-        expanded = await expandShortLink(request.shortLink);
-      } catch (error) {
-        const { code, detail } = errorCode(error, "short_link_failed");
-        backoff(request, code, detail);
-        await saveState(state);
-        continue;
-      }
-      if (!expanded) {
-        await finishAndReply(state, request, {
-          status: "skipped",
-          reason: "not_a_track_link",
-          outcome: "That short link does not lead to a Spotify track.",
-        });
-        await saveState(state);
-        index -= 1;
-        continue;
-      }
-      request.trackId = expanded;
-    }
-    const trackId = request.track?.id ?? request.trackId;
-    if (!trackId) continue; // unreachable: loadState drops requests without a track reference
-
-    if (!request.track) {
-      // Title and artist for the log and the Slack reply. A link to a track that does not exist
-      // stops here; any other lookup failure must not hold up the add, which only needs the ID.
-      try {
-        const found = await getTrack(trackId);
-        if (!found) {
-          await finishAndReply(state, request, {
-            status: "failed",
-            reason: "unknown_track",
-            outcome: "Spotify does not recognise that track link.",
-          });
-          await saveState(state);
-          index -= 1;
-          continue;
-        }
-        request.track = found;
-      } catch (error) {
-        const { code, detail } = errorCode(error, "lookup_failed");
-        // Account-wide problems (not logged in, rate limited...) would fail the add in the same way.
-        if (BLOCKING.has(code)) {
-          block(context, request, code, detail);
-          await saveState(state);
-          continue;
-        }
-      }
-    }
-
-    const before = state.pending.length;
-    await deliver(state, request, request.track ?? untitled(trackId), context);
-    await saveState(state);
-    if (state.pending.length < before) index -= 1;
+    if (await attemptRequest(state, request, context)) index -= 1;
   }
+}
+
+async function expireRequest(state: SongsState, request: PendingRequest): Promise<void> {
+  const why = request.waitingFor ?? "not_processed_in_time";
+  await finishAndReply(state, request, {
+    status: "expired",
+    reason: why,
+    outcome: `Gave up after waiting (${why.replace(/_/g, " ")}).`,
+  });
+}
+
+function waitForBlocker(request: PendingRequest, blocker: NonNullable<RunContext["blocker"]>): void {
+  request.waitingFor = blocker.code;
+  request.detail = blocker.detail ?? spotifyHelp(blocker.code);
+}
+
+/** Works on one request that is due. Returns true when the request left state.pending. */
+async function attemptRequest(state: SongsState, request: PendingRequest, context: RunContext): Promise<boolean> {
+  const expanded = await expandRequestLink(state, request);
+  if (expanded !== "continue") return expanded === "removed";
+  const trackId = request.track?.id ?? request.trackId;
+  if (!trackId) return false; // unreachable: loadState drops requests without a track reference
+
+  const looked = await lookUpRequestTrack(state, request, trackId, context);
+  if (looked !== "continue") return looked === "removed";
+
+  const before = state.pending.length;
+  await deliver(state, request, request.track ?? untitled(trackId), context);
+  await saveState(state);
+  return state.pending.length < before;
+}
+
+async function expandRequestLink(state: SongsState, request: PendingRequest): Promise<RequestStep> {
+  if (request.trackId || !request.shortLink) return "continue";
+  let expanded: string | null;
+  try {
+    expanded = await expandShortLink(request.shortLink);
+  } catch (error) {
+    const { code, detail } = errorCode(error, "short_link_failed");
+    backoff(request, code, detail);
+    await saveState(state);
+    return "later";
+  }
+  if (!expanded) {
+    await finishAndReply(state, request, {
+      status: "skipped",
+      reason: "not_a_track_link",
+      outcome: "That short link does not lead to a Spotify track.",
+    });
+    await saveState(state);
+    return "removed";
+  }
+  request.trackId = expanded;
+  return "continue";
+}
+
+async function lookUpRequestTrack(
+  state: SongsState,
+  request: PendingRequest,
+  trackId: string,
+  context: RunContext,
+): Promise<RequestStep> {
+  if (request.track) return "continue";
+  // Title and artist for the log and the Slack reply. A link to a track that does not exist
+  // stops here; any other lookup failure must not hold up the add, which only needs the ID.
+  try {
+    const found = await getTrack(trackId);
+    if (!found) {
+      await finishAndReply(state, request, {
+        status: "failed",
+        reason: "unknown_track",
+        outcome: "Spotify does not recognise that track link.",
+      });
+      await saveState(state);
+      return "removed";
+    }
+    request.track = found;
+  } catch (error) {
+    const { code, detail } = errorCode(error, "lookup_failed");
+    // Account-wide problems (not logged in, rate limited...) would fail the add in the same way.
+    if (BLOCKING.has(code)) {
+      block(context, request, code, detail);
+      await saveState(state);
+      return "later";
+    }
+  }
+  return "continue";
 }
 
 // --- Orchestration ---------------------------------------------------------------------------
@@ -984,33 +1076,18 @@ export async function getSongsStatus(): Promise<SongsStatus> {
   }
 
   const missing = missingScopes(connection, mode);
-  const spotifyProblem = !connection.configured
-    ? "not_configured"
-    : connection.loginExpired
-      ? "login_expired"
-      : !connection.connected
-        ? "not_connected"
-        : missing.length > 0
-          ? "insufficient_scope"
-          : (runtime.spotifyProblem ?? (mode !== "playlist" && state.premiumRequiredAt ? "premium_required" : null));
-  const spotifyHelpText = spotifyProblem
-    ? spotifyProblem === runtime.spotifyProblem && runtime.spotifyHelp
-      ? runtime.spotifyHelp
-      : spotifyHelp(spotifyProblem) + (missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "")
-    : null;
+  const spotifyProblem = currentSpotifyProblem(connection, missing, mode, state);
+  const spotifyHelpText = spotifyProblemHelp(spotifyProblem, missing);
 
   const slackError = slackConfigured ? runtime.slackError : null;
 
-  const todo: string[] = [];
-  if (!slackConfigured) todo.push("Set SLACK_BOT_TOKEN and SLACK_SONGS_CHANNEL_ID in .env.local.");
-  else if (slackError) todo.push(slackHelp(slackError, channel) ?? slackError);
-  if (spotifyHelpText) todo.push(spotifyHelpText);
+  const todo = songsTodo(slackConfigured, slackError, channel, spotifyHelpText);
 
   const unconfigured = !slackConfigured || !connection.configured;
   const playlist = mode === "queue" ? null : state.playlist;
 
   return {
-    status: unconfigured ? "unconfigured" : todo.length > 0 ? "needs_attention" : "ok",
+    status: overallStatus(unconfigured, todo),
     message: todo.length > 0 ? todo.join(" ") : "Listening for Spotify track links.",
     slack: {
       configured: slackConfigured,
@@ -1028,15 +1105,7 @@ export async function getSongsStatus(): Promise<SongsStatus> {
       mode,
       loginUrl: new URL("/api/spotify/login", redirectUri()).toString(),
       redirectUri: redirectUri(),
-      playlist: playlist
-        ? {
-            id: playlist.id,
-            url: `https://open.spotify.com/playlist/${playlist.id}`,
-            name: playlist.name,
-            source: playlist.source,
-            knownTracks: playlist.trackIds.length,
-          }
-        : null,
+      playlist: playlistStatus(playlist),
       missingScopes: missing,
       problem: spotifyProblem,
       help: spotifyHelpText,
@@ -1044,18 +1113,71 @@ export async function getSongsStatus(): Promise<SongsStatus> {
     loop: { running: Boolean(runtime.timer), everySeconds },
     jam: await getJamStatus(),
     lastSyncAt: state.lastSyncAt,
-    pending: state.pending.map((request) => ({
-      id: request.id,
-      user: request.user,
-      userName: request.userName,
-      text: request.text,
-      postedAt: request.postedAt,
-      track: summarize(request.track ?? (request.trackId ? untitled(request.trackId) : undefined)),
-      waitingFor: request.waitingFor,
-      detail: request.detail,
-      attempts: request.attempts,
-    })),
+    pending: state.pending.map(pendingStatus),
     recent: state.log.slice(0, 20),
+  };
+}
+
+function currentSpotifyProblem(
+  connection: SpotifyConnection,
+  missing: string[],
+  mode: SongsMode,
+  state: SongsState,
+): string | null {
+  if (!connection.configured) return "not_configured";
+  if (connection.loginExpired) return "login_expired";
+  if (!connection.connected) return "not_connected";
+  if (missing.length > 0) return "insufficient_scope";
+  return runtime.spotifyProblem ?? (mode !== "playlist" && state.premiumRequiredAt ? "premium_required" : null);
+}
+
+function spotifyProblemHelp(problem: string | null, missing: string[]): string | null {
+  if (!problem) return null;
+  if (problem === runtime.spotifyProblem && runtime.spotifyHelp) return runtime.spotifyHelp;
+  return spotifyHelp(problem) + (missing.length > 0 ? ` Missing: ${missing.join(", ")}.` : "");
+}
+
+/** What a person has to do, Slack first. */
+function songsTodo(
+  slackConfigured: boolean,
+  slackError: string | null,
+  channel: string | null,
+  spotifyHelpText: string | null,
+): string[] {
+  const todo: string[] = [];
+  if (!slackConfigured) todo.push("Set SLACK_BOT_TOKEN and SLACK_SONGS_CHANNEL_ID in .env.local.");
+  else if (slackError) todo.push(slackHelp(slackError, channel) ?? slackError);
+  if (spotifyHelpText) todo.push(spotifyHelpText);
+  return todo;
+}
+
+function overallStatus(unconfigured: boolean, todo: string[]): SongsStatus["status"] {
+  if (unconfigured) return "unconfigured";
+  return todo.length > 0 ? "needs_attention" : "ok";
+}
+
+function playlistStatus(playlist: PlaylistState | null): SongsStatus["spotify"]["playlist"] {
+  if (!playlist) return null;
+  return {
+    id: playlist.id,
+    url: `https://open.spotify.com/playlist/${playlist.id}`,
+    name: playlist.name,
+    source: playlist.source,
+    knownTracks: playlist.trackIds.length,
+  };
+}
+
+function pendingStatus(request: PendingRequest): SongsStatus["pending"][number] {
+  return {
+    id: request.id,
+    user: request.user,
+    userName: request.userName,
+    text: request.text,
+    postedAt: request.postedAt,
+    track: summarize(request.track ?? (request.trackId ? untitled(request.trackId) : undefined)),
+    waitingFor: request.waitingFor,
+    detail: request.detail,
+    attempts: request.attempts,
   };
 }
 
