@@ -1,0 +1,105 @@
+/*
+ * The featured market's candle chart (app/CandleChart.tsx), drawn in SVG on the page's own tokens: the price-up teal
+ * and price-down coral, hairline rules, label text, and gold for the live price, the screen's live signal.
+ */
+.chart {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.note {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font: 400 28px/1 var(--sans);
+}
+
+.rule {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.label {
+  fill: var(--faint);
+  font: 400 22px/1 var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.rising {
+  fill: var(--up);
+  stroke: var(--up);
+}
+
+.falling {
+  fill: var(--down);
+  stroke: var(--down);
+}
+
+.candle {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: candle-in 520ms var(--bab-ease) both;
+}
+
+@keyframes candle-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.4);
+  }
+}
+
+.volume {
+  opacity: 0.22;
+  stroke-width: 0;
+}
+
+.wick {
+  stroke-width: 2;
+}
+
+.body {
+  stroke-width: 0;
+}
+
+.live {
+  transition: transform 700ms var(--bab-ease);
+}
+
+.liveLine {
+  stroke: var(--bab-gold);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 7;
+  stroke-linecap: round;
+}
+
+.liveTag {
+  fill: var(--ink);
+}
+
+.liveText {
+  fill: var(--bab-black);
+  font: 600 22px/1 var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .candle {
+    animation: none;
+  }
+
+  .live {
+    transition: none;
+  }
+}
