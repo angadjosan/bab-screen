@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>org.blockchainatberkeley.screen.listen</string>
+  <key>CFBundleName</key>
+  <string>B@B screen listener</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>The B@B screen listens for "hey worm" and shows what is asked on the TV.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>The B@B screen transcribes questions on this Mac to answer them on the TV.</string>
+</dict>
+</plist>

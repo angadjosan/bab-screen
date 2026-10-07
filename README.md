@@ -42,7 +42,7 @@ The first read makes macOS ask whether the program running the dev server (Termi
 2. Install the app to the workspace and copy its **Bot User OAuth Token** (`xoxb-...`). Invite the app to the channel where Spotbot posts; the bot token can read history only for conversations it belongs to.
 3. Copy the channel ID from Slack’s channel details. Copy `.env.example` to `.env.local`, then set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID`. To limit results to Spotbot, also set `SLACK_SPOTBOT_USER_ID` to the user ID or bot ID on its messages. Restart the dev server after changing env vars.
 
-The dashboard reads the six most recent images in the newest 100 channel messages and shows new ones as described under "Spot alerts". It refreshes Slack data at most once per minute in a running server process. Uploaded images pass through a signed local endpoint; the browser never receives the bot token. Image blocks or attachments with public HTTPS image URLs load directly. If no image is among the newest 100 messages, it shows an empty state.
+The dashboard reads the six most recent images in the newest 100 channel messages and shows new ones as described under "Spot alerts". It refreshes Slack data at most once per minute in a running server process; while the Slack agent's listener is up, a new image post makes the next request re-read the channel at once and the routine re-read drops to every 10 minutes (see "Slack events"). Uploaded images pass through a signed local endpoint; the browser never receives the bot token. Image blocks or attachments with public HTTPS image URLs load directly. If no image is among the newest 100 messages, it shows an empty state.
 
 Slack API references: [conversation history and scopes](https://docs.slack.dev/reference/methods/conversations.history/), [private file URLs](https://docs.slack.dev/reference/objects/file-object/), [rate limits](https://docs.slack.dev/apis/web-api/rate-limits/).
 
@@ -50,7 +50,7 @@ Slack API references: [conversation history and scopes](https://docs.slack.dev/r
 
 `GET /api/quotes` returns a random sample (`?count=`, 40 by default, 100 at most) of the quotes posted in the Slack channel `SLACK_QUOTES_CHANNEL_ID` (the club's quotes channel is `C7CJ73H55`). Invite the bot to that channel (`/invite @bot`); the scopes Spotbot already needs are enough, and nothing is ever posted. Until the bot is a member the response is `"status": "error"` with `"error": "not_in_channel"` and no quotes.
 
-`lib/quotes.ts` reads the messages of the last 2 years only (`QUOTES_MAX_AGE_DAYS`, 730 days counted back from now; at most the newest 2,000 of them), once an hour, and keeps at most 400 quotes in memory and in `.data/quotes.json`; a request never waits for Slack. Slack is not asked for anything older, and a quote that passes 2 years is dropped the next time quotes are requested. Because the whole window is read again each hour, a quote edited or deleted in Slack leaves the screen within the hour. A quote is a top-level message posted by a person: bot messages, join and leave notices, thread replies, messages with a link, a code block or `@channel`, messages with a file that is not an image, and anything over 240 characters are left out. So is the channel talking about a quote: text with no image that has no quotation marks, names nobody and is not a conversation (`this a fake quote`). There is no filter on what a quote says.
+`lib/quotes.ts` reads the messages of the last 2 years only (`QUOTES_MAX_AGE_DAYS`, 730 days counted back from now; at most the newest 2,000 of them), once an hour (every 6 hours while the Slack agent's listener is up, which re-reads about 20 seconds after each post, edit or delete instead; see "Slack events"), and keeps at most 400 quotes in memory and in `.data/quotes.json`; a request never waits for Slack. Slack is not asked for anything older, and a quote that passes 2 years is dropped the next time quotes are requested. Because the whole window is read again each hour, a quote edited or deleted in Slack leaves the screen within the hour. A quote is a top-level message posted by a person: bot messages, join and leave notices, thread replies, messages with a link, a code block or `@channel`, messages with a file that is not an image, and anything over 240 characters are left out. So is the channel talking about a quote: text with no image that has no quotation marks, names nobody and is not a conversation (`this a fake quote`). There is no filter on what a quote says.
 
 Each quote has `text` (plain text: mentions as names, Slack markup and emoji codes removed), `who`, `poster`, `postedAt`, and `imageUrl` when the message has an image, served through the same signed endpoint as Spotbot photos; a message that is only an image is a quote with `text: null`. `who` is the person quoted and is set only when the message names them (`"words" - Name`, `words — @mention`, `Name: words`, a `>` quote with a name or mention on the next line); otherwise it is `null`, and the person who posted the message is never shown as the one who said it. Several `Name: words` lines are kept as a conversation, one line per speaker.
 
@@ -60,7 +60,7 @@ Each quote has `text` (plain text: mentions as names, Slack markup and emoji cod
 
 `GET /api/chum` returns six photos posted in the last 2 years in the Slack channel `SLACK_CHUM_CHANNEL_ID` (the club's chumming channel is `C032XEA9PTJ`), where members post pictures of themselves hanging out with other members. Invite the bot to the channel (`/invite @bot`); the scopes Spotbot already needs are enough, and nothing is ever posted. With the variable empty the response is `"status": "unconfigured"` and the carousel carries on with quotes; the same goes for any failure in this channel, which never reaches `/api/spot` or `/api/quotes`.
 
-`lib/chum.ts` reads every message of the last 2 years (`CHUM_MAX_AGE_DAYS`, 730 days; at most the newest 2,000 messages) once an hour per server process, and keeps the last read if a re-read fails. The six are the newest photo plus five drawn at random from the rest, drawn again every 10 minutes; a newly posted photo joins at once. Photos are counted one by one: a message with two pictures gives two of the six, in the order they were attached, each with the same caption. Videos and other files, bot and Slackbot messages, join notices and thread replies are left out. Pictures go through the same signed endpoint as Spotbot photos (`/api/spot/image`) and names through the same lookup. Each photo has `poster`, `chums` (the people the message mentions), and `text` (mentions as `@Name`; emoji codes and links removed). The page asks every 30 seconds and keeps its last list if an answer says Slack could not be read.
+`lib/chum.ts` reads every message of the last 2 years (`CHUM_MAX_AGE_DAYS`, 730 days; at most the newest 2,000 messages) once an hour per server process (and again right after each new post while the Slack agent's listener is up, see "Slack events"), and keeps the last read if a re-read fails. The six are the newest photo plus five drawn at random from the rest, drawn again every 10 minutes; a newly posted photo joins at once. Photos are counted one by one: a message with two pictures gives two of the six, in the order they were attached, each with the same caption. Videos and other files, bot and Slackbot messages, join notices and thread replies are left out. Pictures go through the same signed endpoint as Spotbot photos (`/api/spot/image`) and names through the same lookup. Each photo has `poster`, `chums` (the people the message mentions), and `text` (mentions as `@Name`; emoji codes and links removed). The page asks every 30 seconds and keeps its last list if an answer says Slack could not be read.
 
 The caption follows how the channel is used: a post means "me, with these people" (`chum @A`, `donuts w/ @A @B`, `chumming with @A`), and the poster never mentions themselves. So the headline is the people named, and the line under it reads "Chumming with" the poster, where a quote says "Quoted by". The message is shown between the two, on one line, when it says more than the names and the word chum (`tane w/ @A` is shown; `chum @A` is not). When the post names nobody, the message is the headline (`b@by group hang`) over "Chumming with" the poster; with no message either, the poster is the headline and the line reads "Chumming". The headline keeps to one line at 48px; one that does not fit is set at 36px, on one line over the message or else on two lines without the message, since the names matter more. Names that still do not fit are cut to "A, B, and 2 others", and a message is cut with an ellipsis. `ChumCaption`, the deck (`createChumDeck`) and the poll (`useChumPhotos`) are in `app/Chum.tsx`.
 
@@ -82,7 +82,7 @@ Setup:
 2. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the Web API enabled and the redirect URI `http://127.0.0.1:3000/api/spotify/callback` (Spotify rejects `localhost`). New apps are in Development Mode: the app only works while its owner has Spotify Premium, and any other account that will log in (the one playing on this Mac, if it is not the owner) must be added by name and Spotify email under the app's Users Management tab (five users at most). Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env.local`.
 3. Open http://127.0.0.1:3000/api/spotify/login once on this Mac, signed in to Spotify as the account that plays on this Mac, and approve. The refresh token is stored in `.data/spotify.json` (mode 600, gitignored).
 4. Start something playing in the Spotify app on this Mac.
-5. Open http://127.0.0.1:3000/api/songs/sync once after each server start; that starts the 20-second poll. The same URL returns a JSON status: what is missing, who posted which link, and what happened to it. `/api/songs/status` shows the same without contacting Slack or Spotify.
+5. Open http://127.0.0.1:3000/api/songs/sync once after each server start; that starts the 20-second poll (the Slack agent does this by itself every 5 minutes). While the agent's Slack listener is up, each new message is read within a couple of seconds instead and the poll only runs every 5 minutes as a safety net (see "Slack events"). The same URL returns a JSON status: what is missing, who posted which link, and what happened to it. `/api/songs/status` shows the same without contacting Slack or Spotify.
 
 `SPOTIFY_SONGS_MODE` chooses where songs go:
 
@@ -126,9 +126,17 @@ Spotify makes a new invite link whenever a Jam is started, so after restarting t
 
 Accepted links are `https://open.spotify.com/socialsession/...`, `https://spotify.link/...` and `https://spotify.app.link/...`. Nothing else is ever put in the QR. If the bot is asked before any link is known, the tile says how to set one for that minute instead.
 
-The trigger is a message typed by a person in `SLACK_SONGS_CHANNEL_ID` (not a bot message, a join notice or a thread reply) that contains a mention of the bot and "jam" as a whole word, in any case ("jammed" and "jams" do not count, and neither does "jam" inside a link). It is read by the same poll as song requests, so the 20-second poll must be running (step 5 under "Song requests") and the QR appears up to about 25 seconds after the message: up to 20 for the poll, up to 4 more for the page. The minute starts when the server reads the message. A message that asks for the Jam is never treated as a song request as well, whatever links it contains. A request posted more than 2 minutes before the server read it (the server was off) does not put the QR up, but a link in it is still stored. The bot finds its own user ID with Slack's `auth.test`, which needs no extra scope.
+The trigger is a message typed by a person in `SLACK_SONGS_CHANNEL_ID` (not a bot message, a join notice or a thread reply) that contains a mention of the bot and "jam" as a whole word, in any case ("jammed" and "jams" do not count, and neither does "jam" inside a link). It is read by the same poll as song requests, so the 20-second poll must be running (step 5 under "Song requests") and the QR appears up to about 25 seconds after the message: up to 20 for the poll, up to 4 more for the page. With the Slack agent's listener up it is a few seconds. The minute starts when the server reads the message. A message that asks for the Jam is never treated as a song request as well, whatever links it contains. A request posted more than 2 minutes before the server read it (the server was off) does not put the QR up, but a link in it is still stored. The bot finds its own user ID with Slack's `auth.test`, which needs no extra scope.
 
 For that minute the tile grows from 120px to 300px, because at 120px the code is too small to scan from across a room. If the calendar block is showing, it steps aside for the minute; otherwise the carousel below gives up the difference. At 300px each module of a typical invite link is 7 to 9 whole screen pixels (about 5 mm on a 55-inch TV), black on white with a white margin. `/api/songs/status` shows the current link under `jam` (`source` is `slack` or `env`), and `/api/now-playing` carries `jam` while the QR is up.
+
+## Slack events
+
+With `SLACK_APP_TOKEN` set and the Slack agent running, the agent's Socket Mode listener sees every message in the spots, chumming, quotes and songs channels as it is posted (`agent/feeds.ts`). It does not read or store anything for those tiles itself: it sends the Next app a nudge, `POST /api/slack/nudge` with `{"feed": "spots" | "chum" | "quotes" | "songs", "ts"?: "<message ts>"}`, and the Next app re-reads that channel as it always does. So the Next process stays the only writer of `.data/songs.json` and `.data/quotes.json`, and a song request goes through the same lock and cursor whether the nudge or the poll reads it first: it is queued once. A nudge is sent about 1.5 seconds after a message (a burst is one nudge) and at most every 5 seconds per channel. Thread replies are ignored, as the tiles ignore them; edits and deletes nudge the spots, chumming and quotes tiles.
+
+The agent also sends `{"feed": "listener"}` every minute. For 3 minutes after a nudge or a heartbeat the Next app counts the listener as up (`loop.slackListener` in `/api/songs/status`) and its own polls slow to a safety net: spots and chumming photos every 10 minutes, quotes every 6 hours, songs every 5 minutes (every 20 seconds while a request waits, for playback to start say). Without `SLACK_APP_TOKEN`, with the agent stopped, in `JARVIS_DRY_RUN=1`, or without `SCREEN_SECRET`, no nudge arrives and everything polls as described above.
+
+The route takes the same guard as `POST /api/screen`: only from this machine, with `x-screen-secret` equal to `SCREEN_SECRET` (401 wrong secret, 403 not local or no secret set). A mention of the bot in the songs channel with a track link or "jam" is left to the songs poll rather than also run as a request to the agent, so it is not queued twice.
 
 ## News and posts feed
 
@@ -252,8 +260,99 @@ Spotify's Web API stopped giving apps audio analysis in November 2024, so the so
 
 It needs macOS 14.2 or later. The first time it runs, macOS asks to allow "System Audio Recording" for the app that started the server (Terminal, or the binary itself under launchd); allow it in System Settings > Privacy & Security > Screen & System Audio Recording. Until it is allowed the tap hears silence and no glow shows. Set `AUDIO_LEVELS=off` to turn it off; on other systems it is off already. With reduced motion nothing is drawn.
 
+## Worm, the voice stage
+
+Say "hey worm" and ask something. The screen gives most of itself over to the answer: the feed, chart, carousel and calendar fade out behind a frosted stage, now-playing stays in its corner, and a one-line calendar runs along the foot ("No current events", or "Calendar: Poker Night"). Your question appears as you say it, and Worm's answer appears under it, centred on the stage: in large type when it is short, with whatever explains it best beside the words when a picture helps (a diagram, a chart, a table, or a freeform page). Worm starts talking the moment you finish ("Pulling up the calendar.") and says the answer a sentence at a time as it is written.
+
+For 12 seconds after Worm finishes (a gold dot beside your question), a follow-up of three words or more is taken without "hey worm", and Worm remembers the last few questions for three minutes: "can you show me that in a graph?" draws what it just described. The answer stays up for 40 seconds after Worm stops talking (a gold bar drains along the foot), or until you say "thanks worm".
+
+- **Ears** (`lib/stage/ears.ts`, `scripts/listen/Listen.swift`): Apple's on-device SpeechAnalyzer (macOS 26) transcribes the room as it is spoken. Nothing leaves the Mac, and nothing is acted on until the wake phrase. The question is asked 0.9 seconds after the speaker stops. The listener runs while a screen is open and is compiled into `.data/listen` on first use; macOS asks once for microphone access.
+- **Answers** (`lib/stage/turn.ts`): the moment the question ends, Worm says a short line picked from its words ("Pulling up the calendar.", "Checking the music.", `lib/stage/ack.ts`), then answers with a Fireworks model (`FIREWORKS_API_KEY`, `STAGE_MODEL`, default GLM-5.3 at low reasoning effort, `STAGE_REASONING_EFFORT`). Before writing, it can call tools for up to four rounds (`lib/stage/tools.ts`): the club's Slack, the calendar, live prices, today's news, and the music: what is playing, the Spotify queue, adding a song, play, pause, skip, and the volume. The answer is spoken a sentence at a time as it streams in.
+- **What it draws** (`lib/stage/answer-format.ts`, `app/StagePieces.tsx`): the answer streams as tagged blocks. `<say>` is spoken and shown; `<diagram>` gives boxes and arrows, laid out with dagre so they never overlap; `<chart>` and `<table>` take JSON; `<html>` is a freeform page drawn in a sandboxed frame that can never run a script, with the screen's colours and a small set of classes (`app/stage-frame.ts`) that keep it on-brand.
+- **Voice** (`lib/stage/voice.ts`, `scripts/tts/speak.py`): Kokoro, an open text-to-speech model, run on this Mac. Set it up once with `sh scripts/tts/setup.sh` (a Python environment and about 350 MB of model files in `.data`); until then, and with `STAGE_TTS=say`, macOS `say` speaks instead. `STAGE_VOICE` picks a Kokoro voice (default `af_heart`; others include `af_bella`, `am_michael`, `bf_emma`, `bm_george`). B@B is said "bahb", B@by "bahby", and web addresses are never read out. Spotify is dimmed to 30%, not paused, from "hey worm" until Worm finishes, then brought back to the volume it had. Worm's speech goes out through the speakers, so the edge glow moves with it too. When the Slack agent says something in the room (its `say` tool), it sends the line to `POST /api/stage/say` (this machine only, with `SCREEN_SECRET`), and Worm says it in the same voice.
+- **Hearing the club's words**: the listener is given the club's vocabulary, and its usual mishearings are put right before anything is asked: "gym" becomes "jam", "Bob" B@B, "Bobby" B@by.
+
+Showing the queue and adding songs use Spotify's Web API, so Spotify must be logged in once on this Mac at http://127.0.0.1:3000/api/spotify/login (the same login song requests use). Play, pause, skip and volume work through AppleScript without it.
+
+Slack search uses `assistant.search.context`, which needs the bot's `search:read.public` scope (add it in the Slack app's settings and reinstall). Until then Worm says it cannot search Slack.
+
+To try the stage without a microphone or a model key: `curl -X POST localhost:3000/api/stage -H 'content-type: application/json' -d '{"text":"How does DeepSeek EAGLE differ from MTP?","demo":true}'` streams a canned answer through it. Without `demo`, the same request asks Worm for real. `{"close":true}` hands the screen back. Only requests from this Mac are accepted. Set `STAGE_EARS=off` to turn the listener off and `STAGE_SPEECH=off` to keep Worm quiet.
+
+## Screen API
+
+What the Slack agent puts on the screen is server state (`lib/screen-state.ts`, saved in `.data/screen.json`): a banner or a person card on top, a game (Mafia or poker), a leaderboard, a pinned Slack thread, and the agent's slots and preset. The page follows it on one stream (`app/ScreenPushes.tsx`) and redraws on every change; the tiles still poll their own routes.
+
+- **Overlays** (`app/Overlay.tsx`): a banner along the bottom, signed "Worm", with a gold bar that drains over its time, and a person card in the middle. They sit over everything but the coin flip.
+- **Game, leaderboard and pinned thread** (`app/Game.tsx`, `app/Leaderboard.tsx`, `app/PinnedThread.tsx`) take the middle column in place of the featured market while any of them is up, stacked when there are several. The chart comes back once they are gone, and Worm's stage covers them while someone is asking.
+- **Slots and presets** (`app/widgets/registry.ts`) are the agent's vocabulary, and every POST is checked against them, but this page keeps its own layout. A game, leaderboard or thread shows wherever the agent put it, `markets` turns on focus mode, `game_night` brings up the game and the leaderboard, and `news` and `party` change nothing here.
+
+`GET /api/screen` returns the state. `GET /api/screen/stream` is server-sent events: the whole state on connect and on every change, a comment every 15 seconds. The page opens one stream, reconnects 3 seconds after it drops, keeps what was up meanwhile, and drops everything the agent put up after a minute without the server.
+
+`POST /api/screen` takes one op as JSON. It needs the header `x-screen-secret` equal to `SCREEN_SECRET` in `.env.local` and is refused from anywhere but this machine; with `SCREEN_SECRET` unset every POST is refused. The answer is `{ok: true, state}`, or `{ok: false, error}` with 400 (bad op or fields), 401 (wrong secret) or 403 (not local, or no secret set).
+
+| Op | Fields |
+| --- | --- |
+| `set_preset` | `preset` |
+| `show_widget` | `slot`, `widget` (must fit the slot) |
+| `banner` | `text` (up to 280 characters), `ttlSeconds` (default 20) |
+| `person` | `card: {name, headline?, summary?, links?: [{label, url}], imageUrl?}`, `ttlSeconds` (default 30) |
+| `clear_overlays` | none |
+| `pin_thread` | `thread: {channel, ts, author?, text, replies?: [{author, text}], permalink?}` |
+| `unpin_thread` | none |
+| `leaderboard` | `title`, `rows: [{name, score}]` (sorted highest first; empty takes it down) |
+| `game` | `game`: the Mafia or poker state (`MafiaScreen`, `PokerScreen` in `lib/screen-state.ts`) |
+| `clear_game` | none |
+
+```sh
+curl -X POST http://127.0.0.1:3000/api/screen -H "x-screen-secret: $SCREEN_SECRET" \
+  -H "content-type: application/json" -d '{"op":"banner","text":"Pizza is here"}'
+```
+
+A new banner replaces the old one, and so does a new person card; overlays last at most an hour and are taken down on time by the server. Links and image URLs must be http(s). The server listens on 127.0.0.1 only (`package.json`), which is what keeps the endpoint local; the check on the request's address and Host header is a second line, since Next takes `x-forwarded-for` from the request when one is sent.
+
+The agent pins a Slack thread (`pin_slack_thread`, or the busy-thread scheduler) only from `SLACK_CHANNEL_ID` and the channels in the optional comma list `JARVIS_PIN_CHANNELS`, and only when Slack's `conversations.info` (bot scope `channels:read`) says the channel is public: not private, not a DM or group DM, not archived. Anything else is refused before the thread is read, and the refusal does not carry the thread's text.
+
+### Spotify for the agent
+
+The agent's `queue_track` (and "queue X" on the rules fast path) does not call Spotify itself. It asks the Next app, `POST /api/spotify/agent`, so the Next process stays the only one that refreshes and writes `.data/spotify.json`. Same guard as `POST /api/screen` (this machine only, `x-screen-secret` equal to `SCREEN_SECRET`; 401 or 403 otherwise).
+
+| Op | Fields | Answer |
+| --- | --- | --- |
+| `search` | `query` (artist and title, or a Spotify track link; up to 200 characters) | `{ok: true, link, track: {id, name, artists} \| null}` |
+| `queue` | `trackId` (22-character Spotify track ID) | `{ok: true}` |
+
+A Spotify failure answers 200 with `{ok: false, error: "<code>"}` (`not_connected`, `no_active_device`, `premium_required`, `rate_limited`, ...), which the agent turns into a sentence. With `JARVIS_DRY_RUN=1` the agent still searches through the route when `SPOTIFY_CLIENT_ID` is set, but never queues; without it, it searches nothing. Playback (play, pause, skip, volume) stays in the agent, through the Spotify app's AppleScript on this Mac.
+
 ## Background waves
 
 The ribbons behind the page (`app/Background.tsx`) change colour with the daylight outside. The palette is read off the sun's position over Berkeley (`lib/sun.ts`, computed from the clock with no network call; change `LATITUDE` and `LONGITUDE` there for another room), so the dawn and dusk colours move with the seasons. `lib/wave-palette.ts` holds ten keyframe palettes, from a dim indigo and plum at night through blue at midday to the indigo, plum and burnt amber of sunset, and blends between them continuously; the colours are refreshed every 10 seconds, in steps too small to see. To hold the palette at one moment instead, set `PINNED_TIME` in `app/Background.tsx` to an instant such as `"2026-10-01T08:00:00-07:00"`; it is `null`, which follows the sun. Every palette stays under the lightness and luminance ceilings in that file, which are what keep the text readable on top of the waves; the reasoning and the contrast figures are in its comments.
 
 To preview a time, add it to the address: `?time=17:30` holds that time today, `?time=2026-12-21T17:30` holds a date and time (to see another season), and `?day=120` runs a whole day every 120 seconds, starting from `?time` if given (from now otherwise). These override `PINNED_TIME` when it is set. Times are in the computer's time zone.
+
+## Running on the Mac mini
+
+On the Mac mini the dashboard (with Worm's ears and voice), the Slack agent and the kiosk browser run as three launchd LaunchAgents in the logged-in user's session (not LaunchDaemons: Spotify AppleScript, `say`, `afplay` and the microphone only work in the GUI session). The templates are in `launchd/`; `scripts/install.sh` fills in the absolute paths and loads them.
+
+- `com.bab.screen`: `npm run start`, the production build on http://127.0.0.1:3000. `scripts/deploy.sh` builds it.
+- `com.bab.jarvis`: the agent, `npx --no-install tsx agent/index.ts` (the same as `npm run jarvis`; `npm run jarvis:selftest` checks it without keys).
+- `com.bab.kiosk`: `scripts/kiosk.sh` waits until the dashboard answers, then opens it in Google Chrome in kiosk mode, with its own profile (`~/Library/Application Support/bab-kiosk`) so it is a separate instance from any Chrome a person opens. `KIOSK_URL` and `KIOSK_CHROME` override the address and the browser.
+
+Every job starts at login, is restarted when it exits (`KeepAlive`, at most every 10 to 15 seconds) and writes stdout and stderr to `~/Library/Logs/bab/<screen|jarvis|kiosk>.log`. launchd starts jobs with an empty environment, so each plist sets `PATH` to the node directory found at install time (nvm's, which has the version in it: after switching node versions, run the install again), then Homebrew and the system directories. The Next app and the agent read `.env.local` themselves.
+
+First install, from a Terminal on the Mac mini as the user that logs in automatically (not with sudo):
+
+1. Clone the repo, `nvm install 22`, put the secrets in `.env.local` (JARVIS.md, Env).
+2. `npm ci && npm run build`.
+3. `sh scripts/tts/setup.sh` for Worm's voice (see "Worm, the voice stage"; without it Worm speaks with `say`).
+4. `scripts/install.sh`. It renders the plists into `~/Library/LaunchAgents`, unloads any old copy and loads the new one (`launchctl bootstrap gui/$UID`), runs `chmod 600 .env.local`, and prints the manual steps below and the command that installs log rotation.
+
+`--only <service>` (repeatable; `screen`, `jarvis`, `kiosk`) limits it to some services, `--dry-run` renders and lints the plists into a temporary directory and only prints what it would do, and `--uninstall` unloads and removes them (logs are kept).
+
+Manual steps, once per Mac, which the script prints but cannot do:
+
+- `sudo pmset -a sleep 0 displaysleep 0 autorestart 1`, and System Settings > Users & Groups > Automatically log in. The agents only run while that user is logged in.
+- Log rotation: run the `sudo install ... /etc/newsyslog.d/com.bab.conf` line it prints. newsyslog rotates each log at 10 MB, keeps five bzip2'd copies, and sends the job SIGTERM (`scripts/run-service.sh` records each job's pid in `~/Library/Logs/bab/.pid/`) so launchd restarts it onto a fresh file; launchd only opens the log when a job starts.
+- Privacy permissions, granted by someone at the screen when the prompts come up, then checked in System Settings > Privacy & Security: Automation (node may control Spotify), Microphone (Worm's listener, `.data/listen`, started by the screen's node), and Accessibility if a tool needs it. Without them things fail quietly; `tccutil reset Microphone` (or `AppleEvents`) and a restart of the job brings a missed prompt back.
+- Remote access over Tailscale. Tailscale SSH needs the open-source `tailscaled` (`brew install tailscale`, `sudo brew services start tailscale`, `sudo tailscale up --ssh`); with the App Store app, turn on Remote Login under System Settings > General > Sharing and ssh to the Tailscale address instead.
+
+To update: `scripts/deploy.sh` (over SSH is fine). It runs `git pull --ff-only`, `npm ci --include=dev`, `npm run build`, runs `scripts/tts/setup.sh` again if it changed, and `launchctl kickstart -k` each installed service; `scripts/deploy.sh jarvis` restarts only that one. If the pull changed `launchd/`, run `scripts/install.sh` again. To look at a job: `launchctl print gui/$UID/com.bab.jarvis`, `tail -f ~/Library/Logs/bab/*.log`.

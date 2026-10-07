@@ -793,3 +793,27 @@ p {
 .dashboard.is-focus .featured-slot::after {
   content: none;
 }
+
+/* Worm's stage (app/Stage.tsx): everything under the masthead fades out behind it, except the now-playing tile, which
+   stays in its corner above the stage. Nothing is unmounted, so the feed, chart and carousel carry on where they were. */
+.feed-slot,
+.featured-slot,
+.spot-card {
+  transition: opacity var(--bab-slow) var(--bab-ease), visibility 0s;
+}
+
+.dashboard.is-stage .feed-slot,
+.dashboard.is-stage .featured-slot,
+.dashboard.is-stage .events-band,
+.dashboard.is-stage .spot-card {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--bab-fast) linear, visibility 0s linear var(--bab-fast);
+}
+
+.dashboard.is-stage .side-slot {
+  position: relative;
+  z-index: 3;
+  align-self: start;
+}
+

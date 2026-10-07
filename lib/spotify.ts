@@ -358,6 +358,35 @@ export async function addToQueue(trackId: string): Promise<void> {
   await api<unknown>("POST", "/me/player/queue", { uri: `spotify:track:${trackId}` });
 }
 
+/** A track as Worm shows it (lib/stage/tools.ts): with its album and cover, so it can be drawn. */
+export type TrackCard = Track & { album: string | null; imageUrl: string | null; durationMs: number | null };
+
+type ApiTrackCard = ApiTrack & { album?: { name?: string; images?: Array<{ url?: string; width?: number }> }; duration_ms?: number };
+
+function toTrackCard(item: ApiTrackCard | null | undefined): TrackCard | null {
+  const track = toTrack(item);
+  if (!track) return null;
+  const images = item?.album?.images ?? [];
+  const cover = images.find((image) => (image.width ?? 0) <= 320) ?? images[0];
+  return { ...track, album: item?.album?.name ?? null, imageUrl: cover?.url ?? null, durationMs: item?.duration_ms ?? null };
+}
+
+/** The best matches for a search like "Bad Blood Taylor Swift", most relevant first (Worm and the Slack agent's "queue X"). */
+export async function searchTracks(query: string, limit = 5): Promise<TrackCard[]> {
+  const payload = await api<{ tracks?: { items?: ApiTrackCard[] } }>("GET", "/search", {
+    q: query.slice(0, 200),
+    type: "track",
+    limit: String(Math.max(1, Math.min(10, limit))),
+  });
+  return (payload?.tracks?.items ?? []).map(toTrackCard).filter((track): track is TrackCard => track !== null);
+}
+
+/** What is playing and what is queued after it, as Spotify's own queue shows them. */
+export async function getQueue(): Promise<{ playing: TrackCard | null; next: TrackCard[] }> {
+  const payload = await api<{ currently_playing?: ApiTrackCard | null; queue?: ApiTrackCard[] }>("GET", "/me/player/queue");
+  return { playing: toTrackCard(payload?.currently_playing), next: (payload?.queue ?? []).map(toTrackCard).filter((track): track is TrackCard => track !== null) };
+}
+
 /** Devices Spotify currently sees for the account (for diagnostics only). */
 export async function listDevices(): Promise<SpotifyDevice[]> {
   const payload = await api<{

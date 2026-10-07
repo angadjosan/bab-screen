@@ -33,3 +33,6 @@ id_ed25519*
 
 # local Clef environment (scripts/clef)
 .clef-venv
+
+# python bytecode
+__pycache__/

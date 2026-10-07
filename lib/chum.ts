@@ -1,6 +1,7 @@
 // Chumming photos for the carousel: pictures posted in the club's "chumming" Slack channel
 // (SLACK_CHUM_CHANNEL_ID), where members post photos of themselves hanging out with other members. Every
-// photo of the last 2 years is in the pool (read once an hour); the carousel gets six of them at a time: the
+// photo of the last 2 years is in the pool (read once an hour, and again after each new post while the Slack
+// agent's listener is up); the carousel gets six of them at a time: the
 // newest, and five drawn at random from the rest, drawn again every 10 minutes.
 //
 // Read-only, and separate from the spots in lib/slack.ts: its own channel, its own cache, its own
@@ -8,6 +9,7 @@
 // name lookups, so a failure here never reaches /api/spot or /api/quotes.
 
 import { SlackApiError, isImageFile, signedImagePath, slackGet, type SlackMessage } from "./slack";
+import { nudgeCount, slackListenerLive } from "./slack-live";
 import { describeSpot } from "./slack-users";
 
 /** How many photos /api/chum returns (newest first): the newest photo and the rest drawn at random. */
@@ -117,7 +119,9 @@ function postPhotos(message: SlackMessage): Match[] {
   return photos;
 }
 
-let pool: { channel: string; readAt: number; matches: Match[] } | undefined;
+// nudges is the nudge count when the pool was read: a new post in the channel (lib/slack-live.ts) reads it again.
+type Pool = { channel: string; readAt: number; nudges: number; matches: Match[] };
+let pool: Pool | undefined;
 let draw: { at: number; keys: string[] } | undefined;
 const matchKey = (match: Match) => `${match.ts}-${match.fileId}`;
 
@@ -143,6 +147,25 @@ function drawSix(matches: Match[]): Match[] {
   return chosen.slice(0, MAX_CHUM_PHOTOS).sort((a, b) => Number(b.ts) - Number(a.ts));
 }
 
+function poolIsStale(current: Pool | undefined, channel: string): boolean {
+  if (!current || current.channel !== channel) return true;
+  return Date.now() - current.readAt > POOL_REFRESH_MS || current.nudges !== nudgeCount("chum");
+}
+
+/** The pool, read again when it is stale. A failed re-read keeps the last pool; with none yet, the error is thrown. */
+async function currentPool(channel: string): Promise<Pool> {
+  if (pool && !poolIsStale(pool, channel)) return pool;
+  const nudges = nudgeCount("chum");
+  try {
+    pool = { channel, readAt: Date.now(), nudges, matches: await readPool(channel) };
+  } catch (error) {
+    if (!pool || pool.channel !== channel) throw error;
+    pool.readAt = Date.now() - POOL_REFRESH_MS + RETRY_TTL_MS;
+    pool.nudges = nudges;
+  }
+  return pool;
+}
+
 async function fetchChum(): Promise<Fetched> {
   const channel = process.env.SLACK_CHUM_CHANNEL_ID;
   if (!process.env.SLACK_BOT_TOKEN || !channel) {
@@ -157,16 +180,7 @@ async function fetchChum(): Promise<Fetched> {
   }
 
   try {
-    if (!pool || pool.channel !== channel || Date.now() - pool.readAt > POOL_REFRESH_MS) {
-      try {
-        pool = { channel, readAt: Date.now(), matches: await readPool(channel) };
-      } catch (error) {
-        // A failed re-read keeps showing the last pool; with none yet, the error is reported.
-        if (!pool || pool.channel !== channel) throw error;
-        pool.readAt = Date.now() - POOL_REFRESH_MS + RETRY_TTL_MS;
-      }
-    }
-    const matches = drawSix(pool.matches);
+    const matches = drawSix((await currentPool(channel)).matches);
     if (matches.length === 0) {
       return {
         ttlMs: OK_TTL_MS,
@@ -209,16 +223,24 @@ async function fetchChum(): Promise<Fetched> {
   }
 }
 
-let cached: { value: ChumResult; expiresAt: number } | undefined;
+/** While the agent's Slack listener is up (lib/slack-live.ts) a new post nudges a re-read; this is the safety net. */
+const LIVE_OK_TTL_MS = 10 * 60_000;
+// nudges is the nudge count when the read started, so a nudge that lands during a read still causes another one.
+let cached: { value: ChumResult; expiresAt: number; nudges: number } | undefined;
 let inFlight: Promise<ChumResult> | undefined;
 
-/** Six chumming photos (see drawSix). Reads the channel at most once an hour per server process. Never throws. */
+/**
+ * Six chumming photos (see drawSix). Reads the channel at most once a minute per server process, or once every ten
+ * minutes while the agent's Slack listener is up and says when the channel changes. Never throws.
+ */
 export async function getChumPhotos(): Promise<ChumResult> {
-  if (cached && Date.now() < cached.expiresAt) return cached.value;
+  if (cached && Date.now() < cached.expiresAt && cached.nudges === nudgeCount("chum")) return cached.value;
   if (!inFlight) {
+    const nudges = nudgeCount("chum");
     inFlight = fetchChum()
       .then(({ value, ttlMs }) => {
-        cached = { value, expiresAt: Date.now() + ttlMs };
+        const ttl = ttlMs === OK_TTL_MS && slackListenerLive() ? LIVE_OK_TTL_MS : ttlMs;
+        cached = { value, expiresAt: Date.now() + ttl, nudges };
         return value;
       })
       .finally(() => {

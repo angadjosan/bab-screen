@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template. scripts/install.sh fills in the @...@ paths and copies the result
+     to ~/Library/LaunchAgents/com.bab.screen.plist. Edit this file, not the copy. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bab.screen</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@REPO_DIR@/scripts/run-service.sh</string>
+    <string>screen</string>
+    <string>@NODE_BIN@/npm</string>
+    <string>run</string>
+    <string>start</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@REPO_DIR@</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@NODE_BIN@:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>@HOME@</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>@LOG_DIR@/screen.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOG_DIR@/screen.log</string>
+</dict>
+</plist>
