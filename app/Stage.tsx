@@ -11,7 +11,7 @@ import styles from "./Stage.module.css";
 const IDLE: StageState = { turn: 0, phase: "idle", heard: "", heardFinal: false, ack: null, activity: null, blocks: [], error: null, closesAt: null, listenUntil: null };
 const EVENTS_POLL_MS = 60_000;
 /** Sizes for Worm's words, largest first: the largest at which they fit is used. */
-const SAY_SIZES = [40, 34, 30, 26];
+const SAY_SIZES = [64, 54, 46, 40, 34, 28];
 const cx = (...names: Array<string | false | null | undefined>) => names.filter(Boolean).join(" ");
 
 /** The stage as the server holds it (lib/stage/state.ts), live over /api/stage/stream. */
@@ -54,10 +54,26 @@ function useEventLine(active: boolean): string {
   return line;
 }
 
+/** Whether a follow-up is being listened for: Worm has finished and is waiting a few seconds for more. */
+function useFollowUpOpen(listenUntil: number | null): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const left = listenUntil === null ? 0 : listenUntil - Date.now();
+    setOpen(left > 0);
+    if (left <= 0) return;
+    const timer = window.setTimeout(() => setOpen(false), left);
+    return () => window.clearTimeout(timer);
+  }, [listenUntil]);
+  return open;
+}
+
+/** What was asked, in the asker's own words. The gold dot means Worm is listening: to the question, or for a follow-up. */
 function Heard({ state }: { state: StageState }) {
+  const followUp = useFollowUpOpen(state.listenUntil);
+  const listening = state.phase === "listening" || (state.phase === "done" && followUp);
   return (
     <p className={cx(styles.heard, state.heardFinal && styles.heardFinal)}>
-      {state.phase === "listening" && <span className={styles.mic} aria-hidden="true" />}
+      {listening && <span className={styles.mic} aria-hidden="true" />}
       <span>{state.heard || "Listening…"}</span>
     </p>
   );
@@ -93,7 +109,7 @@ function Says({ blocks, state }: { blocks: StageBlock[]; state: StageState }) {
   const crowded = useFitText(box, blocks.map((block) => block.body).join("\n") + (state.activity ?? "") + (state.error ?? ""));
   return (
     <div ref={box} className={cx(styles.says, crowded && styles.saysCrowded)}>
-      {state.ack && <p className={styles.ack}>{state.ack}</p>}
+      {state.ack && !blocks.length && <p className={styles.ack}>{state.ack}</p>}
       {blocks.map((block, i) => <p key={i} className={cx(styles.say, !block.done && styles.sayLive)}>{plainSpeech(block.body)}</p>)}
       {state.activity && <p className={styles.activity}><span className={styles.spinner} aria-hidden="true" />{state.activity}</p>}
       {state.error && <p className={styles.error}>{state.error}</p>}
@@ -122,10 +138,12 @@ export function StagePanel({ state }: { state: StageState }) {
   const answering = Boolean(state.ack || state.blocks.length || state.activity || state.error);
   return (
     <section className={cx(styles.stage, on && styles.on)} aria-hidden={!on} aria-live="polite" aria-label="Worm">
-      <Heard state={state} />
-      <div className={cx(styles.answer, answering && styles.answerOn, visuals.length > 0 && styles.withVisuals)}>
-        <Says blocks={says} state={state} />
-        {visuals.length > 0 && <div className={styles.visuals}>{visuals.map((block, i) => <Visual key={i} block={block} />)}</div>}
+      <div className={styles.exchange}>
+        <Heard state={state} />
+        <div className={cx(styles.answer, answering && styles.answerOn, visuals.length > 0 && styles.withVisuals)}>
+          <Says blocks={says} state={state} />
+          {visuals.length > 0 && <div className={styles.visuals}>{visuals.map((block, i) => <Visual key={i} block={block} />)}</div>}
+        </div>
       </div>
       <footer className={styles.foot}>
         <p className={styles.eventLine}>{eventLine}</p>

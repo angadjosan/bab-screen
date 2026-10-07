@@ -61,28 +61,43 @@ function DiagramPiece({ body }: { body: string }) {
   return layout ? <DiagramView layout={layout} /> : null;
 }
 
-const CHART = { width: 1000, height: 520, left: 96, right: 24, top: 64, bottom: 56 };
+const CHART = { width: 1000, height: 520, left: 96, right: 96, top: 64, bottom: 56 };
 const SERIES_CLASSES = ["series0", "series1", "series2"] as const;
 
-function chartScale(series: number[][]) {
+/**
+ * The vertical scale. Bars start at zero, or they lie about size; lines zoom to their own range with a little room
+ * above and below, so two series a few percent apart do not lie flat along the top.
+ */
+function chartScale(series: number[][], bars: boolean) {
   const values = series.flat().filter(Number.isFinite);
-  const low = Math.min(...values, 0);
-  const high = Math.max(...values);
+  const top = Math.max(...values);
+  const bottom = Math.min(...values);
+  const pad = (top - bottom || Math.abs(top) || 1) * 0.08;
+  const low = bars ? Math.min(bottom, 0) : bottom - pad;
+  const high = bars ? Math.max(top, 0) : top + pad;
   const span = high - low || 1;
   const y = (value: number) => CHART.top + (1 - (value - low) / span) * (CHART.height - CHART.top - CHART.bottom);
   const ticks = Array.from({ length: 5 }, (_, i) => low + (span * i) / 4);
-  return { y, ticks };
+  return { y, ticks, floor: bars ? y(0) : CHART.height - CHART.bottom };
 }
 
-function seriesShape(type: ChartSpec["type"], values: number[], slots: number, index: number, count: number, y: (value: number) => number) {
+function seriesShape(type: ChartSpec["type"], values: number[], slots: number, index: number, count: number, y: (value: number) => number, floor: number) {
   const plotWidth = CHART.width - CHART.left - CHART.right;
   const slot = plotWidth / Math.max(slots, 1);
   if (type === "bar") {
     const barWidth = (slot * 0.7) / count;
-    return values.map((value, i) => <rect key={i} x={CHART.left + i * slot + slot * 0.15 + index * barWidth} y={y(value)} width={barWidth} height={y(0) - y(value)} />);
+    return values.map((value, i) => <rect key={i} x={CHART.left + i * slot + slot * 0.15 + index * barWidth} y={Math.min(y(value), floor)} width={barWidth} height={Math.abs(floor - y(value))} />);
   }
   const points = values.map((value, i) => `${(CHART.left + i * slot + slot / 2).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
   return [<polyline key="line" points={points} />];
+}
+
+/** A line's name at its right-hand end, in its own colour: read with the line, no legend to look up. */
+function SeriesName({ name, values, slots, index, y }: { name: string | undefined; values: number[]; slots: number; index: number; y: (value: number) => number }) {
+  const last = values.length - 1;
+  if (!name || last < 0) return null;
+  const slot = (CHART.width - CHART.left - CHART.right) / Math.max(slots, 1);
+  return <text x={CHART.left + last * slot + slot / 2 + 14} y={y(values[last])} dominantBaseline="middle" className={cx(styles.seriesName, styles[SERIES_CLASSES[index]])}>{name}</text>;
 }
 
 function ChartPiece({ body }: { body: string }) {
@@ -91,7 +106,7 @@ function ChartPiece({ body }: { body: string }) {
   const series = (spec.series ?? []).slice(0, 3).map((entry) => (entry.values ?? []).map(Number).slice(0, 40));
   const labels = (spec.x ?? []).slice(0, 40);
   const slots = Math.max(labels.length, ...series.map((values) => values.length));
-  const { y, ticks } = chartScale(series);
+  const { y, ticks, floor } = chartScale(series, spec.type === "bar");
   const every = Math.ceil(slots / 8);
   return (
     <svg viewBox={`0 0 ${CHART.width} ${CHART.height}`} className={styles.chart} role="img" aria-label={spec.title ?? "Chart"}>
@@ -99,15 +114,16 @@ function ChartPiece({ body }: { body: string }) {
       {ticks.map((tick) => (
         <g key={tick}>
           <line x1={CHART.left} x2={CHART.width - CHART.right} y1={y(tick)} y2={y(tick)} className={styles.chartRule} />
-          <text x={CHART.left - 14} y={y(tick)} textAnchor="end" dominantBaseline="middle" className={styles.chartLabel}>{`${spec.unit === "$" ? "$" : ""}${Number(tick.toPrecision(3)).toLocaleString("en-US")}`}</text>
+          <text x={CHART.left - 14} y={y(tick)} textAnchor="end" dominantBaseline="middle" className={styles.chartLabel}>{`${spec.unit === "$" ? "$" : ""}${Number(tick.toPrecision(4)).toLocaleString("en-US")}`}</text>
         </g>
       ))}
       {labels.map((label, i) => i % every === 0 && (
         <text key={i} x={CHART.left + ((CHART.width - CHART.left - CHART.right) / slots) * (i + 0.5)} y={CHART.height - 18} textAnchor="middle" className={styles.chartLabel}>{label}</text>
       ))}
       {series.map((values, i) => (
-        <g key={i} className={cx(styles.series, styles[SERIES_CLASSES[i]], spec.type === "bar" && styles.bars)}>{seriesShape(spec.type, values, slots, i, series.length, y)}</g>
+        <g key={i} className={cx(styles.series, styles[SERIES_CLASSES[i]], spec.type === "bar" && styles.bars)}>{seriesShape(spec.type, values, slots, i, series.length, y, floor)}</g>
       ))}
+      {spec.type !== "bar" && series.map((values, i) => <SeriesName key={i} name={spec.series?.[i]?.name} values={values} slots={slots} index={i} y={y} />)}
     </svg>
   );
 }
