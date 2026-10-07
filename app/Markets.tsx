@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { NewsworthyResponse, NewsworthyToken } from "@/lib/feed-types";
-import { HL_WS_URL, SET_ASSETS, TV_WIDGET_ORIGIN, chartUrl, fetchGateQuotes, fetchHyperliquidQuotes, formatChange, formatPrice, makeAsset, quoteFromCtx, type Asset, type Quote, type Quotes } from "@/lib/markets";
+import { HL_WS_URL, SET_ASSETS, fetchGateQuotes, fetchHyperliquidQuotes, formatChange, formatPrice, makeAsset, quoteFromCtx, type Asset, type Quote, type Quotes } from "@/lib/markets";
+import { CandleChart } from "./CandleChart";
 import styles from "./Markets.module.css";
 
 /** How long a set token stays in the featured slot. */
@@ -19,8 +20,6 @@ export const TAPE_SECONDS_PER_ITEM = 2.5;
 // A quote older than this is not shown; with none left the components fall back to "unavailable".
 const STALE_MS = 60_000;
 const LOADING_GRACE_MS = 10_000;
-// The chart widget says when its page has loaded but not when it has drawn; drawing takes about a second more.
-const CHART_SETTLE_MS = 3_000;
 /** A chart that has not loaded after this long is given up on, and its market left out of the rotation ... */
 const CHART_TIMEOUT_MS = 30_000;
 /** ... until this much later. */
@@ -460,62 +459,6 @@ export function TickerTape() {
   );
 }
 
-/**
- * TradingView's Advanced Chart widget for the featured market: candles with volume, from TradingView's own
- * Hyperliquid feed. The next market's chart loads underneath the current one and is uncovered at the swap,
- * so a chart is never seen loading. The outgoing frame is removed, so only two exist at a time.
- */
-function Chart({ featured, next, onLoaded }: { featured: Asset; next: Asset | null; onLoaded: (coin: string, ok: boolean) => void }) {
-  const frames = useRef(new Map<string, HTMLIFrameElement>());
-
-  useEffect(() => {
-    const timers = new Set<number>();
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== TV_WIDGET_ORIGIN) return;
-      const coin = [...frames.current].find(([, frame]) => frame.contentWindow === event.source)?.[0];
-      if (!coin) return;
-      let name: unknown;
-      try { name = (typeof event.data === "string" ? JSON.parse(event.data) : event.data)?.name; } catch { return; }
-      if (name === "tv-widget-no-data") onLoaded(coin, false);
-      if (name !== "tv-widget-load") return;
-      // Frames stay invisible until TradingView answers, so an unreachable widget shows the note, not a browser error page.
-      frames.current.get(coin)?.setAttribute("data-loaded", "");
-      const timer = window.setTimeout(() => {
-        timers.delete(timer);
-        if (frames.current.has(coin)) onLoaded(coin, true);
-      }, CHART_SETTLE_MS);
-      timers.add(timer);
-    };
-    window.addEventListener("message", onMessage);
-    return () => { window.removeEventListener("message", onMessage); timers.forEach((timer) => window.clearTimeout(timer)); };
-  }, [onLoaded]);
-
-  // Featured first, next second: React leaves the next market's frame in place when it becomes the featured one.
-  const shown = next && next.coin !== featured.coin ? [featured, next] : [featured];
-  return (
-    <div className={styles.chart}>
-      <div className={styles.chartFrames}>
-        <p className={styles.chartNote}>Loading chart…</p>
-        {shown.map((asset) => (
-          <iframe
-            key={asset.coin}
-            ref={(frame) => { if (frame) frames.current.set(asset.coin, frame); else frames.current.delete(asset.coin); }}
-            className={asset.coin === featured.coin ? `${styles.chartFrame} ${styles.chartFront}` : styles.chartFrame}
-            src={chartUrl(asset.tv)}
-            title={`${asset.name} candlestick chart with volume, by TradingView`}
-            aria-hidden={asset.coin !== featured.coin}
-            tabIndex={-1}
-          />
-        ))}
-      </div>
-      <p className={styles.chartCredit}>
-        <span>{featured.lot > 1 ? `Chart is priced per ${featured.lot.toLocaleString("en-US")} ${featured.symbol}` : featured.venue === "gate" && "Price and chart: Gate spot market"}</span>
-        <a href="https://www.tradingview.com/" target="_blank" rel="noopener nofollow">Track all markets on TradingView</a>
-      </p>
-    </div>
-  );
-}
-
 /** Symbol, name, price and 24-hour change. Sized for the longest case; shrinks to fit if a line ever runs over. */
 function Header({ asset, quote }: { asset: Asset; quote: Quote | undefined }) {
   const box = useRef<HTMLDivElement>(null);
@@ -563,7 +506,7 @@ function Header({ asset, quote }: { asset: Asset; quote: Quote | undefined }) {
   );
 }
 
-/** One market at a time: header on top, its TradingView chart filling the rest. Fills its container. */
+/** One market at a time: header on top, its candle chart filling the rest. Fills its container. */
 export function FeaturedMarket() {
   const { status, quotes, featured, next, chartLoaded } = useMarkets();
   if (status !== "live") {
@@ -577,7 +520,7 @@ export function FeaturedMarket() {
   return (
     <section className={styles.featured} aria-label={`${featured.name} price`}>
       <Header key={featured.coin} asset={featured} quote={quotes[featured.coin]} />
-      <Chart featured={featured} next={next} onLoaded={chartLoaded} />
+      <CandleChart featured={featured} next={next} price={quotes[featured.coin]?.price ?? null} onLoaded={chartLoaded} />
     </section>
   );
 }
