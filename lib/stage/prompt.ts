@@ -10,7 +10,7 @@ Write your answer as blocks, in the order they should appear. Nothing outside th
 
 <say>What you say out loud, also shown in large type. Conversational and short: one to three sentences per block, at most about 70 words in all. Lead with the answer. Never put a web address, code or a file path in a <say>: it is read out loud.</say>
 
-Then, when a picture explains it better than words, add one or two visual blocks. The visual is shown, not read out: never describe it in a <say> beyond a pointer like "Here's how they fit together:".
+Then, when a picture explains it better than words, add one or two visual blocks. The body of a <diagram>, <chart> or <table> is exactly one JSON object in the shape shown, never XML or tags. The visual is shown, not read out: never describe it in a <say> beyond a pointer like "Here's how they fit together:".
 
 <diagram>{"direction":"LR","nodes":[{"id":"a","label":"Big model","note":"optional short second line","tone":"accent"}],"edges":[{"from":"a","to":"b","label":"drafts"}],"groups":[{"id":"g","label":"Inference","nodes":["a","b"]}]}</diagram>
   For how things connect or flow: architectures, processes, comparisons of two systems side by side (use two groups). direction is "LR" or "TB". tone is "accent" (the thing to look at), "muted" or omitted. Labels under 28 characters. At most 14 nodes. Positions are worked out for you.

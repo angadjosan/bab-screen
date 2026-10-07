@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { CalendarEvent, EventsResponse } from "@/lib/events";
 import { isSpeakable, plainSpeech } from "@/lib/stage/answer-format";
+import { willDraw } from "@/lib/stage/pieces";
 import type { StageBlock, StageState } from "@/lib/stage/state";
 import { Visual } from "./StagePieces";
 import styles from "./Stage.module.css";
@@ -116,7 +117,8 @@ export function StagePanel({ state }: { state: StageState }) {
   const on = state.phase !== "idle";
   const eventLine = useEventLine(on);
   const says = state.blocks.filter((block) => block.kind === "say" && isSpeakable(plainSpeech(block.body)));
-  const visuals = state.blocks.filter((block) => block.kind !== "say");
+  // Only what will draw gets room: a block the model wrote in a form that cannot be read is left out.
+  const visuals = state.blocks.filter(willDraw);
   const answering = Boolean(state.ack || state.blocks.length || state.activity || state.error);
   return (
     <section className={cx(styles.stage, on && styles.on)} aria-hidden={!on} aria-live="polite" aria-label="Worm">

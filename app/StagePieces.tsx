@@ -3,18 +3,11 @@
 import { useMemo } from "react";
 import type { StageBlock } from "@/lib/stage/state";
 import { layoutDiagram, readDiagram, type DiagramLayout, type PlacedNode } from "@/lib/stage/diagram-layout";
+import { readChart, readTable, type ChartSpec } from "@/lib/stage/pieces";
 import { stageFrameDocument } from "./stage-frame";
 import styles from "./Stage.module.css";
 
 const cx = (...names: Array<string | false | null | undefined>) => names.filter(Boolean).join(" ");
-
-function parseJson<T>(body: string): T | null {
-  try {
-    return JSON.parse(body) as T;
-  } catch {
-    return null;
-  }
-}
 
 /** Shown while a visual is still streaming in: its frame, breathing, so the space it will take is already held. */
 function Drawing() {
@@ -68,8 +61,6 @@ function DiagramPiece({ body }: { body: string }) {
   return layout ? <DiagramView layout={layout} /> : null;
 }
 
-type ChartSpec = { type?: "line" | "bar"; title?: string; unit?: string; x?: string[]; series?: { name?: string; values?: number[] }[] };
-
 const CHART = { width: 1000, height: 520, left: 96, right: 24, top: 64, bottom: 56 };
 const SERIES_CLASSES = ["series0", "series1", "series2"] as const;
 
@@ -95,9 +86,9 @@ function seriesShape(type: ChartSpec["type"], values: number[], slots: number, i
 }
 
 function ChartPiece({ body }: { body: string }) {
-  const spec = parseJson<ChartSpec>(body);
-  const series = (spec?.series ?? []).slice(0, 3).map((entry) => (entry.values ?? []).map(Number).slice(0, 40));
-  if (!spec || !series.some((values) => values.length)) return null;
+  const spec = readChart(body);
+  if (!spec) return null;
+  const series = (spec.series ?? []).slice(0, 3).map((entry) => (entry.values ?? []).map(Number).slice(0, 40));
   const labels = (spec.x ?? []).slice(0, 40);
   const slots = Math.max(labels.length, ...series.map((values) => values.length));
   const { y, ticks } = chartScale(series);
@@ -121,19 +112,17 @@ function ChartPiece({ body }: { body: string }) {
   );
 }
 
-type TableSpec = { title?: string; columns?: string[]; rows?: unknown[][] };
-
 function TablePiece({ body }: { body: string }) {
-  const spec = parseJson<TableSpec>(body);
-  if (!spec?.rows?.length) return null;
+  const spec = readTable(body);
+  if (!spec) return null;
   return (
     <div className={styles.tableBox}>
       {spec.title && <p className={styles.tableTitle}>{spec.title}</p>}
       <table className={styles.table}>
-        {spec.columns && <thead><tr>{spec.columns.slice(0, 5).map((column, i) => <th key={i}>{String(column)}</th>)}</tr></thead>}
+        {spec.columns.length > 0 && <thead><tr>{spec.columns.slice(0, 5).map((column, i) => <th key={i}>{column}</th>)}</tr></thead>}
         <tbody>
           {spec.rows.slice(0, 8).map((row, i) => (
-            <tr key={i} style={{ animationDelay: `${i * 70}ms` }}>{row.slice(0, 5).map((cell, j) => <td key={j}>{String(cell ?? "")}</td>)}</tr>
+            <tr key={i} style={{ animationDelay: `${i * 70}ms` }}>{row.slice(0, 5).map((cell, j) => <td key={j}>{cell}</td>)}</tr>
           ))}
         </tbody>
       </table>
