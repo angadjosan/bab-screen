@@ -25,6 +25,7 @@ import {
   TARGET_ITEMS,
 } from "./feed-sources";
 import { refreshClubNews } from "./club-news";
+import { readInterests } from "./interests";
 import { refreshNewsworthy } from "./newsworthy";
 import { readJson, writeJson } from "./songs-store";
 import type { FeedAgentName, FeedItem, FeedResponse, FeedSourceStatus } from "./feed-types";
@@ -221,7 +222,9 @@ async function refresh(): Promise<void> {
   if (!state.items.length) publish(fallbackOrder(pool, state.history), pool, "fallback", now, false);
 
   try {
-    const outcome = await pickWithAgent(pool, state.history, now, outlets);
+    // Lean toward what the people in the room care about (the Slack agent's memory; null without it).
+    const interests = agentPlan().order.length ? readInterests(now) : null;
+    const outcome = await pickWithAgent(pool, state.history, now, outlets, interests);
     publish(outcome.ids, pool, "agent", Date.now(), true, new Set(outcome.alerts));
     state.agent = { at: new Date().toISOString(), agent: outcome.agent, model: outcome.model, ms: outcome.ms, ok: true, error: null, attempts: outcome.attempts };
   } catch (error) {

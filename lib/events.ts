@@ -10,7 +10,9 @@
 // change). Turning a wall-clock time in a named zone into an instant is done here with Intl and
 // the machine's tz database, not with the VTIMEZONE blocks in the file and not with the server's
 // local timezone. Calendar text is untrusted: only the title and a short location leave this
-// module, as plain text with control characters removed and lengths clamped.
+// module for the wall, as plain text with control characters removed and lengths clamped. The one
+// exception is getEventsAroundNow(), for the Slack agent only (agent/), which also carries the
+// description, organizer and guests; no route serves it.
 
 import { createHash } from "node:crypto";
 import ICAL from "ical.js";
@@ -74,6 +76,16 @@ export type Occurrence = {
   startDate: string | null;
   endDate: string | null;
   location: string | null;
+  /** Agent only (getEventsAroundNow); never part of CalendarEvent, so never sent to the wall. */
+  private?: PrivateDetails;
+};
+
+/** What the wall never sees: the full location, the description, the organizer and guests. Plain text, clamped. */
+export type PrivateDetails = {
+  location: string | null;
+  description: string | null;
+  organizer: string | null;
+  guests: Array<{ name: string | null; email: string | null; status: string | null }>;
 };
 
 // --- Wall-clock time and zones ---------------------------------------------------------------
@@ -237,7 +249,34 @@ function shapeOf(component: IcalComponent, start: Stamp, calendarZone: string): 
   return { allDay: false, wallDurationMs: seconds !== null ? Math.max(0, seconds * 1000) : 0 };
 }
 
-type Details = { uid: string; title: string; location: string | null };
+type Details = { uid: string; title: string; location: string | null; private: PrivateDetails };
+
+const DESCRIPTION_MAX = 1_200;
+const GUEST_MAX = 40;
+
+/** A CN parameter or a mailto: value from ORGANIZER/ATTENDEE, as plain text. */
+function person(property: IcalProperty): { name: string | null; email: string | null; status: string | null } {
+  const cn = property.getParameter("cn");
+  const status = property.getParameter("partstat");
+  const value = property.getFirstValue();
+  const email = typeof value === "string" ? clean(value.replace(/^mailto:/i, ""), 200) : "";
+  return {
+    name: (typeof cn === "string" && clean(cn, 120)) || null,
+    email: email && /^[^@\s]+@[^@\s]+$/.test(email) ? email : null,
+    status: (typeof status === "string" && clean(status, 20).toLowerCase()) || null,
+  };
+}
+
+function privateDetails(component: IcalComponent): PrivateDetails {
+  const organizer = component.getFirstProperty("organizer");
+  const who = organizer ? person(organizer) : null;
+  return {
+    location: clean(component.getFirstPropertyValue("location"), 400) || null,
+    description: clean(component.getFirstPropertyValue("description"), DESCRIPTION_MAX) || null,
+    organizer: who ? who.name ?? who.email : null,
+    guests: component.getAllProperties("attendee").slice(0, GUEST_MAX).map(person).filter((guest) => guest.name || guest.email),
+  };
+}
 
 function occurrence(details: Details, start: Stamp, shape: Shape, displayZone: string): Occurrence {
   const id = createHash("sha1").update(`${details.uid}\n${instanceKeys(start)[0]}`).digest("hex").slice(0, 16);
@@ -252,11 +291,12 @@ function occurrence(details: Details, start: Stamp, shape: Shape, displayZone: s
       startDate: dateKey(start.wall),
       endDate: dateKey(last),
       location: details.location,
+      private: details.private,
     };
   }
   const startMs = zonedToUtc(start.wall, start.zone);
   const endMs = shape.wallDurationMs ? zonedToUtc(wallFromMs(wallMs(start.wall) + shape.wallDurationMs), start.zone) : startMs;
-  return { id, title: details.title, startMs, endMs: Math.max(startMs, endMs), allDay: false, startDate: null, endDate: null, location: details.location };
+  return { id, title: details.title, startMs, endMs: Math.max(startMs, endMs), allDay: false, startDate: null, endDate: null, location: details.location, private: details.private };
 }
 
 export type ParseOptions = {
@@ -330,6 +370,7 @@ function eventDetails(component: IcalComponent, uid: string): Details {
     uid,
     title: clean(component.getFirstPropertyValue("summary"), TITLE_MAX) || "(No title)",
     location: shortLocation(component.getFirstPropertyValue("location")),
+    private: privateDetails(component),
   };
 }
 
@@ -575,4 +616,47 @@ export function getEvents(now = Date.now()): EventsResponse {
     stale: runtime.error !== null,
     ...(message ? { message } : {}),
   };
+}
+
+// --- Agent only ------------------------------------------------------------------------------
+
+/** An event for the Slack agent (agent/), with what the wall never gets. Never send this to the page. */
+export type AgentCalendarEvent = {
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string | null;
+  description: string | null;
+  organizer: string | null;
+  guests: Array<{ name: string | null; email: string | null; status: string | null }>;
+};
+
+/**
+ * Events overlapping [now - beforeMs, now + afterMs], soonest first, with descriptions and guests,
+ * for the agent's visitor context. Uses the same download and cache as getEvents(), and waits for a
+ * download only when nothing has been read yet. Calendar text is untrusted: treat it as data.
+ */
+export async function getEventsAroundNow(options: { now?: number; beforeMs?: number; afterMs?: number; limit?: number } = {}): Promise<{ status: EventsResponse["status"]; events: AgentCalendarEvent[]; message?: string }> {
+  const now = options.now ?? Date.now();
+  const first = getEvents(now);
+  if (first.status === "loading" && runtime.refreshing) await runtime.refreshing.catch(() => undefined);
+  const latest = first.status === "loading" ? getEvents(now) : first;
+  if (latest.status !== "ok") return { status: latest.status, events: [], ...(latest.message ? { message: latest.message } : {}) };
+  const from = now - (options.beforeMs ?? 3 * 3_600_000);
+  const to = now + (options.afterMs ?? 6 * 3_600_000);
+  const events = runtime.events
+    .filter((event) => event.endMs > from && event.startMs < to)
+    .slice(0, options.limit ?? 8)
+    .map((event) => ({
+      title: event.title,
+      start: new Date(event.startMs).toISOString(),
+      end: new Date(event.endMs).toISOString(),
+      allDay: event.allDay,
+      location: event.private?.location ?? event.location,
+      description: event.private?.description ?? null,
+      organizer: event.private?.organizer ?? null,
+      guests: event.private?.guests ?? [],
+    }));
+  return { status: "ok", events };
 }

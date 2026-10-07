@@ -8,14 +8,15 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { currentVolume, duck, isDucked, restoreAfter, setVolume } from "../duck";
 import { ACK_LINES } from "./ack";
 
-/** Spotify's volume while someone asks and Worm answers, as a share of what it was. */
-const DIMMED = 0.3;
 /** The listener stays deaf this long after speech ends, for the room's echo. */
 const ECHO_MS = 700;
 /** The music comes back this long after the last line, so a pause between two lines does not bring it up and down. */
 const RELEASE_AFTER_MS = 1_500;
+/** The music stays dimmed at most this long if nothing brings it back (a question that is never answered). */
+const DIM_AT_MOST_MS = 2 * 60_000;
 
 type Voice = {
   queue: Promise<void>;
@@ -24,71 +25,35 @@ type Voice = {
   generation: number;
   speaking: ChildProcess | null;
   quietUntil: number;
-  /** Spotify's volume before Worm dimmed it, or null while it is not dimmed. */
-  original: number | null;
-  /** Every volume change, in order: a dim can never read a volume that a restore is still putting back. */
-  volumeOps: Promise<void>;
-  releaseTimer?: NodeJS.Timeout;
 };
 const shared = globalThis as { __babStageVoice?: Voice };
-const voice = (shared.__babStageVoice ??= { queue: Promise.resolve(), pending: 0, generation: 0, speaking: null, quietUntil: 0, original: null, volumeOps: Promise.resolve() });
+const voice = (shared.__babStageVoice ??= { queue: Promise.resolve(), pending: 0, generation: 0, speaking: null, quietUntil: 0 });
 
 const spotify = (command: string) =>
   new Promise<string>((resolve) => {
     execFile("osascript", ["-e", `if application "Spotify" is running then tell application "Spotify" to ${command}`], { timeout: 3_000 }, (error, out) => resolve(error ? "" : String(out).trim()));
   });
 
-function volumeOp(op: () => Promise<void>): Promise<void> {
-  voice.volumeOps = voice.volumeOps.then(op, op);
-  return voice.volumeOps;
-}
-
 const musicEnabled = () => process.platform === "darwin" && process.env.STAGE_SPEECH !== "off";
 
-/** Dims Spotify, once, until releaseMusic(). Called when "hey worm" is heard and before Worm speaks. */
+/** Dims Spotify (lib/duck.ts, shared with the coin flip and the Slack agent) until releaseMusic(). */
 export function dimMusic(): Promise<void> {
-  clearTimeout(voice.releaseTimer);
-  if (!musicEnabled()) return Promise.resolve();
-  return volumeOp(async () => {
-    if (voice.original !== null) return;
-    const volume = Number(await spotify("get sound volume"));
-    if (!Number.isFinite(volume) || volume <= 0) return;
-    voice.original = volume;
-    await spotify(`set sound volume to ${Math.round(volume * DIMMED)}`);
-  });
+  return musicEnabled() ? duck(DIM_AT_MOST_MS) : Promise.resolve();
 }
 
 /** Brings Spotify back to its volume from before it was dimmed, after a short wait in case Worm speaks again. */
 export function releaseMusic(afterMs = RELEASE_AFTER_MS): void {
-  clearTimeout(voice.releaseTimer);
-  voice.releaseTimer = setTimeout(() => {
-    void volumeOp(async () => {
-      const original = voice.original;
-      voice.original = null;
-      if (original !== null) await spotify(`set sound volume to ${original}`);
-    });
-  }, afterMs);
+  if (isDucked()) restoreAfter(afterMs);
 }
 
 /**
- * Sets the music's volume (0 to 100) for someone who asked for it. While Worm has the music dimmed, this is the volume
- * it comes back to; the dim itself stays until Worm is done.
+ * Sets the music's volume (0 to 100) for someone who asked for it. While the music is dimmed, this is the volume it
+ * comes back to; the dim itself stays until Worm is done.
  */
-export function setMusicVolume(level: number): Promise<void> {
-  const target = Math.round(Math.min(100, Math.max(0, level)));
-  return volumeOp(async () => {
-    if (voice.original !== null) voice.original = target;
-    else await spotify(`set sound volume to ${target}`);
-  });
-}
+export const setMusicVolume = (level: number) => setVolume(level);
 
 /** The music's volume as someone in the room would describe it: the undimmed level while Worm is talking. */
-export async function musicVolume(): Promise<number | null> {
-  await voice.volumeOps;
-  if (voice.original !== null) return voice.original;
-  const volume = Number(await spotify("get sound volume"));
-  return Number.isFinite(volume) ? volume : null;
-}
+export const musicVolume = () => currentVolume();
 
 /** Play, pause, skip or go back in Spotify on this Mac. Works without the Spotify login, through AppleScript. */
 export async function controlPlayback(action: "play" | "pause" | "next" | "previous"): Promise<string> {

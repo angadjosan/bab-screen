@@ -1,3 +1,10 @@
+test it on my raspberry pi this weekend
+
+grab everything from Slack
+rename it to @Office
+is it hosted anywhere
+communication protocol widget
+
 B@b TV - poker mode (buyin via crypto on QR code)
 
 - small things

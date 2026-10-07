@@ -371,9 +371,13 @@ function toTrackCard(item: ApiTrackCard | null | undefined): TrackCard | null {
   return { ...track, album: item?.album?.name ?? null, imageUrl: cover?.url ?? null, durationMs: item?.duration_ms ?? null };
 }
 
-/** The best matches for a search like "Bad Blood Taylor Swift", most relevant first. */
+/** The best matches for a search like "Bad Blood Taylor Swift", most relevant first (Worm and the Slack agent's "queue X"). */
 export async function searchTracks(query: string, limit = 5): Promise<TrackCard[]> {
-  const payload = await api<{ tracks?: { items?: ApiTrackCard[] } }>("GET", "/search", { q: query, type: "track", limit: String(limit) });
+  const payload = await api<{ tracks?: { items?: ApiTrackCard[] } }>("GET", "/search", {
+    q: query.slice(0, 200),
+    type: "track",
+    limit: String(Math.max(1, Math.min(10, limit))),
+  });
   return (payload?.tracks?.items ?? []).map(toTrackCard).filter((track): track is TrackCard => track !== null);
 }
 

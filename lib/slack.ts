@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { nudgeCount, slackListenerLive } from "./slack-live";
 import { describeSpot, type SpotDescription } from "./slack-users";
 
 /** How many recent image messages /api/spot returns in `spots` (newest first). */
@@ -188,7 +189,10 @@ const RETRY_TTL_MS = 10_000;
 
 type Fetched = { value: SpotResult; ttlMs: number };
 
-let cachedSpot: { value: SpotResult; expiresAt: number } | undefined;
+/** While the agent's Slack listener is up (lib/slack-live.ts) a new post nudges a re-read; this is the safety net. */
+const LIVE_OK_TTL_MS = 10 * 60_000;
+// nudges is the nudge count when the read started, so a nudge that lands during a read still causes another one.
+let cachedSpot: { value: SpotResult; expiresAt: number; nudges: number } | undefined;
 let inFlight: Promise<SpotResult> | undefined;
 
 type SpotMatch = { message: SlackMessage; ts: string; imageUrl: string };
@@ -297,11 +301,17 @@ async function fetchLatestSpot(): Promise<Fetched> {
   }
 }
 
+/**
+ * The newest spots. Asks Slack at most once a minute per server process, or once every ten minutes while the agent's
+ * Slack listener is up and says when the channel changes. Never throws.
+ */
 export async function getLatestSpot(): Promise<SpotResult> {
-  if (cachedSpot && Date.now() < cachedSpot.expiresAt) return cachedSpot.value;
+  if (cachedSpot && Date.now() < cachedSpot.expiresAt && cachedSpot.nudges === nudgeCount("spots")) return cachedSpot.value;
   if (!inFlight) {
+    const nudges = nudgeCount("spots");
     inFlight = fetchLatestSpot().then(({ value, ttlMs }) => {
-      cachedSpot = { value, expiresAt: Date.now() + ttlMs };
+      const ttl = ttlMs === OK_TTL_MS && slackListenerLive() ? LIVE_OK_TTL_MS : ttlMs;
+      cachedSpot = { value, expiresAt: Date.now() + ttl, nudges };
       return value;
     }).finally(() => {
       inFlight = undefined;

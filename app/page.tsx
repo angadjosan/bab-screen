@@ -10,6 +10,8 @@ import { FeaturedMarket, MarketsProvider, TickerTape } from "./Markets";
 import { NowPlaying } from "./NowPlaying";
 import { StagePanel, useStage } from "./Stage";
 import { QuoteCaption, QuoteFrame, useQuoteDeck, type Quote } from "./Quotes";
+import { Overlays } from "./Overlay";
+import { ScreenPushes, asksForFocus, pushedPieces, useScreenState } from "./ScreenPushes";
 import { RecentSpots, SpotTakeover, useSpotAlerts } from "./SpotAlert";
 
 /** How often the page asks whether focus mode is on (switched from Slack, lib/commands.ts). */
@@ -267,10 +269,15 @@ export default function Dashboard() {
   // The calendar block is given room only while it has events to list (not while the calendar is unconnected or empty).
   const [hasEvents, setHasEvents] = useState(false);
   // Focus mode: only the ticker tape, the featured market and the week's events.
-  const [focus, setFocus] = useState(false);
+  const [focusFromSlack, setFocus] = useState(false);
   // Worm's stage (app/Stage.tsx) takes most of the screen while someone is asking or being answered.
   const stage = useStage();
   const staged = stage.phase !== "idle";
+  // What the Slack agent put up (app/ScreenPushes.tsx): a game, leaderboard or pinned thread in place of the
+  // featured market, and banners and person cards on top.
+  const screen = useScreenState();
+  const pushed = pushedPieces(screen);
+  const focus = focusFromSlack || asksForFocus(screen);
 
   useEffect(() => {
     let alive = true;
@@ -314,7 +321,7 @@ export default function Dashboard() {
             <CoinFlip />
           </div>
         )}
-        <div className="featured-slot"><FeaturedMarket /></div>
+        <div className="featured-slot">{pushed.length > 0 ? <ScreenPushes pieces={pushed} /> : <FeaturedMarket />}</div>
         {!focus && (
           <div className="side-slot">
             <NowPlaying />
@@ -325,6 +332,7 @@ export default function Dashboard() {
           <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
         </section>
         <StagePanel state={stage} />
+        <Overlays overlays={screen?.overlays ?? []} />
         {!focus && <SpotTakeover spot={spots.takeover} now={spots.now} />}
       </main>
     </MarketsProvider>
