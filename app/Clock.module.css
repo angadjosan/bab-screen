@@ -1,0 +1,66 @@
+/*
+ * The clock and the next-block ring beside the B@B mark (app/Clock.tsx). The ring's gold is the screen's live
+ * signal: it is the only thing here that moves.
+ */
+.clock {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.time {
+  font: 600 40px/1 var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.ring {
+  flex: none;
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.track,
+.progress {
+  fill: none;
+  stroke-width: 3.5;
+}
+
+.track {
+  stroke: var(--line-strong);
+}
+
+.progress {
+  stroke: var(--bab-gold);
+  stroke-linecap: butt;
+  stroke-dasharray: var(--ring-length);
+  stroke-dashoffset: var(--ring-length);
+  animation: ring-fill 12s linear forwards;
+}
+
+@keyframes ring-fill {
+  97% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+    opacity: 0.4;
+  }
+}
+
+/* Upright again inside the turned ring. */
+.ether {
+  fill: var(--muted);
+  transform: rotate(90deg);
+  transform-origin: 20px 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress {
+    animation: none;
+    stroke-dashoffset: 0;
+    opacity: 0.4;
+  }
+}

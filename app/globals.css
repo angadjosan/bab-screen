@@ -124,7 +124,7 @@ p {
   border-top: var(--bab-hair) solid var(--line);
 }
 
-/* Row 1: the B@B mark at the left edge, then the ticker tape in the width that is left. */
+/* Row 1: the B@B mark at the left edge, the clock and the next-block ring (app/Clock.tsx), then the ticker tape in the width that is left. */
 .top-row {
   grid-column: 1 / -1;
   grid-row: 1;
