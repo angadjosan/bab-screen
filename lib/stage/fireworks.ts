@@ -1,14 +1,11 @@
-// Worm's models, on Fireworks' OpenAI-compatible chat API, streamed. Two of them: a fast one for the instant "one sec"
-// and a stronger one for the answer, which may call tools (lib/stage/tools.ts) before it writes.
+// Worm's model, on Fireworks' OpenAI-compatible chat API, streamed. It may call tools (lib/stage/tools.ts) before it
+// writes the answer.
 
 const BASE_URL = "https://api.fireworks.ai/inference/v1/chat/completions";
-/** Kimi K3 on Fireworks' fast router, with thinking off: its first word came in 0.16 s (GLM-5.3 flash: 2.4 s). */
-const DEFAULT_FAST_MODEL = "accounts/fireworks/routers/kimi-k3-fast";
 const DEFAULT_MODEL = "accounts/fireworks/models/glm-5p3";
 const REQUEST_TIMEOUT_MS = 90_000;
 
 export const fireworksKey = () => process.env.FIREWORKS_API_KEY?.trim() || null;
-export const fastModel = () => process.env.STAGE_FAST_MODEL?.trim() || DEFAULT_FAST_MODEL;
 export const answerModel = () => process.env.STAGE_MODEL?.trim() || DEFAULT_MODEL;
 /**
  * GLM-5.3 always thinks before it answers, and at its default effort it can spend a whole reply's tokens doing so:
@@ -16,8 +13,6 @@ export const answerModel = () => process.env.STAGE_MODEL?.trim() || DEFAULT_MODE
  * and 0.6 s (full). It cannot be "none" for GLM-5.3.
  */
 export const reasoningEffort = () => process.env.STAGE_REASONING_EFFORT?.trim() || "low";
-/** The acknowledgement is a few words, so its model is told not to think at all. */
-export const fastReasoningEffort = () => process.env.STAGE_FAST_REASONING_EFFORT?.trim() || "none";
 
 export type ToolCall = { id: string; name: string; arguments: string };
 export type ChatMessage =
@@ -77,12 +72,12 @@ async function post(payload: Record<string, unknown>, signal: AbortSignal): Prom
  * text and any tool calls the model asked for.
  */
 export async function streamChat(
-  request: { model: string; messages: ChatMessage[]; tools?: ToolSpec[]; maxTokens: number; temperature?: number; reasoningEffort?: string },
+  request: { model: string; messages: ChatMessage[]; tools?: ToolSpec[]; maxTokens: number; temperature?: number },
   onText: (textSoFar: string) => void,
   signal: AbortSignal,
 ): Promise<{ text: string; toolCalls: ToolCall[] }> {
   const body = await post(
-    { model: request.model, messages: request.messages, tools: request.tools, max_tokens: request.maxTokens, temperature: request.temperature ?? 0.4, reasoning_effort: request.reasoningEffort ?? reasoningEffort() },
+    { model: request.model, messages: request.messages, tools: request.tools, max_tokens: request.maxTokens, temperature: request.temperature ?? 0.4, reasoning_effort: reasoningEffort() },
     signal,
   );
   let text = "";

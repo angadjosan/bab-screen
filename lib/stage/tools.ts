@@ -6,6 +6,8 @@ import { getEvents } from "../events";
 import { getFeed } from "../feed";
 import { fetchHyperliquidQuotes, makeAsset } from "../markets";
 import { getNowPlaying } from "../now-playing";
+import { addToQueue, getQueue, SpotifyError, searchTracks, type TrackCard } from "../spotify";
+import { controlPlayback, musicVolume, setMusicVolume } from "./voice";
 import type { ToolSpec } from "./fireworks";
 
 const SLACK_SEARCH_URL = "https://slack.com/api/assistant.search.context";
@@ -66,6 +68,53 @@ async function news(): Promise<unknown> {
   };
 }
 
+const LOGIN_HINT = "Spotify is not logged in on this Mac yet. Someone at the screen's computer needs to sign in once, at /api/spotify/login on this server.";
+
+/** A Spotify Web API failure, said in words the model can pass on. */
+function spotifyProblem(error: unknown): { error: string } {
+  if (error instanceof SpotifyError && (error.code === "not_connected" || error.code === "insufficient_scope")) return { error: LOGIN_HINT };
+  if (error instanceof SpotifyError && error.code === "no_active_device") return { error: "Spotify is not playing on any device right now" };
+  return { error: error instanceof Error ? `Spotify: ${error.message}` : "Spotify could not be reached" };
+}
+
+const trackForModel = (track: TrackCard) => ({ name: track.name, artists: track.artists.join(", "), album: track.album, imageUrl: track.imageUrl });
+
+async function spotifyQueue(): Promise<unknown> {
+  try {
+    const { playing, next } = await getQueue();
+    return { nowPlaying: playing && trackForModel(playing), upNext: next.slice(0, 10).map(trackForModel) };
+  } catch (error) {
+    return spotifyProblem(error);
+  }
+}
+
+async function queueSong(args: ToolArgs): Promise<unknown> {
+  try {
+    const [track] = await searchTracks(text(args.query, 120), 1);
+    if (!track) return { error: `nothing on Spotify matches "${text(args.query, 120)}"` };
+    await addToQueue(track.id);
+    return { queued: trackForModel(track) };
+  } catch (error) {
+    return spotifyProblem(error);
+  }
+}
+
+const PLAYBACK = ["play", "pause", "next", "previous"] as const;
+
+async function playback(args: ToolArgs): Promise<unknown> {
+  const action = PLAYBACK.find((name) => name === args.action);
+  if (!action) return { error: `action must be one of ${PLAYBACK.join(", ")}` };
+  return { done: action, playerState: await controlPlayback(action) };
+}
+
+async function volume(args: ToolArgs): Promise<unknown> {
+  const current = await musicVolume();
+  if (current === null) return { error: "Spotify is not running" };
+  const level = typeof args.level === "number" ? args.level : current + (typeof args.change === "number" ? args.change : 0);
+  await setMusicVolume(level);
+  return { volume: Math.round(Math.min(100, Math.max(0, level))), was: current };
+}
+
 const TOOLS: Record<string, Tool> = {
   search_slack: {
     spec: tool("search_slack", "Search the club's Slack messages. Use for anything about the club, its members, projects, task assignments, decisions or plans.", { query: { type: "string", description: "Search words" } }, ["query"]),
@@ -83,9 +132,34 @@ const TOOLS: Record<string, Tool> = {
     run: marketPrice,
   },
   now_playing: {
-    spec: tool("now_playing", "The song playing in the clubroom on Spotify.", {}, []),
+    spec: tool("now_playing", "The song playing in the clubroom on Spotify, with its album cover (artworkUrl) and position.", {}, []),
     activity: () => "Checking what's playing",
     run: () => getNowPlaying(),
+  },
+  spotify_queue: {
+    spec: tool("spotify_queue", "What is playing in the clubroom and the songs queued after it, with album covers (imageUrl) you can draw.", {}, []),
+    activity: () => "Checking the queue",
+    run: spotifyQueue,
+  },
+  queue_song: {
+    spec: tool("queue_song", "Find a song on Spotify and add it to the end of the clubroom queue.", { query: { type: "string", description: "Song and artist, e.g. Bad Blood Taylor Swift" } }, ["query"]),
+    activity: (args) => `Queueing "${text(args.query, 60)}"`,
+    run: queueSong,
+  },
+  playback: {
+    spec: tool("playback", "Play, pause, skip to the next song or go back to the previous one in the clubroom's Spotify.", { action: { type: "string", enum: [...PLAYBACK] } }, ["action"]),
+    activity: (args) => `${text(args.action, 12) === "next" ? "Skipping" : "Changing"} the music`,
+    run: playback,
+  },
+  music_volume: {
+    spec: tool(
+      "music_volume",
+      "Set the music's volume, 0 to 100, or change it by an amount (e.g. +15 for louder, -15 for quieter). Returns the new and old volume.",
+      { level: { type: "number", description: "New volume, 0 to 100" }, change: { type: "number", description: "Amount to change it by" } },
+      [],
+    ),
+    activity: () => "Changing the volume",
+    run: volume,
   },
   recent_news: {
     spec: tool("recent_news", "Today's tech, AI and crypto headlines on the screen, and recent stories about the club and its members.", {}, []),

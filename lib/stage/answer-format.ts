@@ -77,9 +77,27 @@ export function parseAnswer(raw: string, finished = false): StageBlock[] {
   return blocks;
 }
 
-/** The spoken text of blocks that have finished, in order, for the voice to read out. */
-export function finishedSpeech(blocks: StageBlock[]): string[] {
-  return blocks.filter((block) => block.kind === "say" && block.done).map((block) => plainSpeech(block.body)).filter(isSpeakable);
+/** A sentence has ended when its full stop is followed by a space and the start of another sentence. */
+const SENTENCE_END = /(?<=[.!?…]["”’)]?)\s+(?=["“‘(]?[\p{Lu}\p{N}])/u;
+
+/** The sentences of one spoken block that are complete: all of them once it has closed, else all but the last. */
+function completeSentences(block: StageBlock): string[] {
+  const sentences = plainSpeech(block.body).split(SENTENCE_END).filter(Boolean);
+  return block.done ? sentences : sentences.slice(0, -1);
+}
+
+/**
+ * What can be said so far, a sentence at a time and in order, so Worm starts talking as soon as the first sentence is
+ * written rather than when its whole block is. The list only ever grows as the answer streams in.
+ */
+export function speechSoFar(blocks: StageBlock[]): string[] {
+  const said: string[] = [];
+  for (const block of blocks) {
+    if (block.kind !== "say") continue;
+    said.push(...completeSentences(block).filter(isSpeakable));
+    if (!block.done) break;
+  }
+  return said;
 }
 
 /** Markdown a model may slip in, taken out before the text is spoken or shown. */

@@ -1,7 +1,7 @@
 /*
  * Worm's stage (app/Stage.tsx, app/StagePieces.tsx): a frosted surface over everything under the masthead, the
  * waves still glowing through it. What was asked sits at the top right, under the now-playing tile; Worm's answer
- * has its own lighter surface on the left. Gold is Worm's: its mark, the live caret and the closing bar.
+ * is set straight on the stage on the left. Gold is Worm's: the live caret, the listening dot and the closing bar.
  */
 
 .stage {
@@ -74,16 +74,16 @@
 
 /* --- Worm's answer -------------------------------------------------------------------------------------------- */
 
+/* Worm's answer, straight on the stage: the words on the left, anything drawn on the right. */
 .answer {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1100px);
+  grid-template-columns: minmax(0, 1100px);
   grid-template-rows: minmax(0, 1fr);
-  column-gap: 28px;
+  column-gap: 56px;
   align-items: stretch;
-  padding: 36px 40px;
-  background: color-mix(in oklab, var(--ink) 5%, transparent);
+  padding: 8px 0 0;
   opacity: 0;
   transform: translateY(12px);
   transition: opacity var(--bab-slow) var(--bab-ease), transform var(--bab-slow) var(--bab-ease);
@@ -96,34 +96,7 @@
 
 /* With a picture, the words take a narrower column and the picture the rest. */
 .withVisuals {
-  grid-template-columns: 64px minmax(0, 540px) minmax(0, 1fr);
-}
-
-.speaker {
-  align-self: start;
-  padding-top: 14px;
-}
-
-.worm {
-  display: block;
-  overflow: visible;
-}
-
-.worm path {
-  fill: none;
-  stroke: var(--bab-gold);
-  stroke-width: 5;
-  stroke-linecap: round;
-}
-
-.wormBusy {
-  animation: wriggle 0.7s ease-in-out infinite;
-}
-
-@keyframes wriggle {
-  50% {
-    transform: scaleY(-1);
-  }
+  grid-template-columns: minmax(0, 600px) minmax(0, 1fr);
 }
 
 /* The words take the largest size at which they fit (useFitText in Stage.tsx). Below the smallest, the oldest lines
@@ -439,7 +412,6 @@
   }
 
   .mic,
-  .wormBusy,
   .say,
   .sayLive::after,
   .spinner,

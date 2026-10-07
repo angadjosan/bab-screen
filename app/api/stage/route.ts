@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { closeStage } from "../../../lib/stage/state";
 import { askWorm, cancelTurn } from "../../../lib/stage/turn";
+import { releaseMusic } from "../../../lib/stage/voice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export async function POST(request: NextRequest) {
   if (body?.close === true) {
     cancelTurn();
     closeStage();
+    releaseMusic(0);
     return new NextResponse(null, { status: 204 });
   }
   const text = typeof body?.text === "string" ? body.text.trim().slice(0, QUESTION_MAX) : "";

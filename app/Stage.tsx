@@ -30,15 +30,6 @@ export function useStage(): StageState {
   return state;
 }
 
-/** Worm's mark: a gold squiggle, the same wave as the glow along the bottom, that wriggles while Worm works or talks. */
-function WormMark({ busy }: { busy: boolean }) {
-  return (
-    <svg className={cx(styles.worm, busy && styles.wormBusy)} viewBox="0 0 64 24" width={64} height={24} aria-hidden="true">
-      <path d="M4 12 Q 11 2 18 12 T 32 12 T 46 12 T 60 12" />
-    </svg>
-  );
-}
-
 /** One line for the calendar while the stage has the screen: what is on now, or that nothing is. */
 function useEventLine(active: boolean): string {
   const [line, setLine] = useState("No current events");
@@ -80,12 +71,18 @@ function useFitText(box: React.RefObject<HTMLDivElement | null>, content: string
   useLayoutEffect(() => {
     const element = box.current;
     if (!element) return;
-    const fits = () => element.scrollHeight <= element.clientHeight;
-    const size = SAY_SIZES.find((px) => {
-      element.style.setProperty("--say-size", `${px}px`);
-      return fits();
-    });
-    setCrowded(size === undefined);
+    const fit = () => {
+      const size = SAY_SIZES.find((px) => {
+        element.style.setProperty("--say-size", `${px}px`);
+        return element.scrollHeight <= element.clientHeight;
+      });
+      setCrowded(size === undefined);
+    };
+    fit();
+    // The column narrows when a picture arrives beside the words, which makes them taller: fit them again.
+    const observer = new ResizeObserver(fit);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [box, content]);
   return crowded;
 }
@@ -112,23 +109,19 @@ function Closing({ closesAt }: { closesAt: number | null }) {
 
 /**
  * Worm's stage, over the rest of the screen while someone is asking or being answered: what they said at the top
- * right, Worm's answer on its own surface on the left, said in large type with anything drawn beside it, and a
- * line for the calendar along the foot.
+ * right in their own words, Worm's answer on the left in large type with anything it draws beside it, and a line for
+ * the calendar along the foot.
  */
 export function StagePanel({ state }: { state: StageState }) {
   const on = state.phase !== "idle";
   const eventLine = useEventLine(on);
   const says = state.blocks.filter((block) => block.kind === "say" && isSpeakable(plainSpeech(block.body)));
   const visuals = state.blocks.filter((block) => block.kind !== "say");
-  const busy = state.phase === "thinking" || state.phase === "answering";
   const answering = Boolean(state.ack || state.blocks.length || state.activity || state.error);
   return (
     <section className={cx(styles.stage, on && styles.on)} aria-hidden={!on} aria-live="polite" aria-label="Worm">
       <Heard state={state} />
       <div className={cx(styles.answer, answering && styles.answerOn, visuals.length > 0 && styles.withVisuals)}>
-        <div className={styles.speaker}>
-          <WormMark busy={busy} />
-        </div>
         <Says blocks={says} state={state} />
         {visuals.length > 0 && <div className={styles.visuals}>{visuals.map((block, i) => <Visual key={i} block={block} />)}</div>}
       </div>

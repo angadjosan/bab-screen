@@ -8,7 +8,7 @@ import readline from "node:readline";
 import { buildSwiftHelper, swiftHelper } from "../swift-helper";
 import { beginTurn, closeStage, stageState, updateTurn } from "./state";
 import { askWorm, cancelTurn } from "./turn";
-import { isSpeaking } from "./voice";
+import { dimMusic, isSpeaking, releaseMusic } from "./voice";
 
 const HELPER = swiftHelper("listen", "Listen.swift");
 /** Recognisers hear "hey worm" as one word, or as "a worm" when it is said quickly. */
@@ -44,12 +44,15 @@ function ask(capture: Capture): void {
   clearTimeout(capture.giveUpTimer);
   ears.capture = null;
   const question = questionSoFar(capture);
-  if (question) void askWorm(question, capture.turn);
-  else if (stageState().turn === capture.turn) closeStage();
+  if (question) return void askWorm(question, capture.turn);
+  releaseMusic();
+  if (stageState().turn === capture.turn) closeStage();
 }
 
 function wake(text: string): void {
   cancelTurn();
+  // The music dims as soon as someone starts asking, so the room can hear them and the listener can too.
+  void dimMusic();
   const turn = beginTurn("");
   const capture: Capture = { turn, settled: "", live: afterWake(text) };
   capture.giveUpTimer = setTimeout(() => { if (ears.capture === capture && !questionSoFar(capture)) ask(capture); }, NO_QUESTION_MS);
@@ -85,6 +88,7 @@ export function hearLine(line: string): void {
   if (DISMISS.test(heard.text) && stageState().phase !== "idle") {
     cancelTurn();
     closeStage();
+    releaseMusic(0);
     return;
   }
   if (WAKE.test(heard.text) && !ears.capture) return wake(heard.text);
