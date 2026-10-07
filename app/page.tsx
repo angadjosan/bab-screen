@@ -8,6 +8,7 @@ import { Events } from "./Events";
 import { Feed } from "./Feed";
 import { FeaturedMarket, MarketsProvider, TickerTape } from "./Markets";
 import { NowPlaying } from "./NowPlaying";
+import { StagePanel, useStage } from "./Stage";
 import { QuoteCaption, QuoteFrame, useQuoteDeck, type Quote } from "./Quotes";
 import { RecentSpots, SpotTakeover, useSpotAlerts } from "./SpotAlert";
 
@@ -267,6 +268,9 @@ export default function Dashboard() {
   const [hasEvents, setHasEvents] = useState(false);
   // Focus mode: only the ticker tape, the featured market and the week's events.
   const [focus, setFocus] = useState(false);
+  // Worm's stage (app/Stage.tsx) takes most of the screen while someone is asking or being answered.
+  const stage = useStage();
+  const staged = stage.phase !== "idle";
 
   useEffect(() => {
     let alive = true;
@@ -297,7 +301,7 @@ export default function Dashboard() {
 
   return (
     <MarketsProvider>
-      <main className={`dashboard ${focus ? "is-focus" : ""}`}>
+      <main className={`dashboard ${focus ? "is-focus" : ""} ${staged ? "is-stage" : ""}`}>
         <div className="top-row">
           <img className="brand-logo" src="/bab-logo.svg" alt="Blockchain at Berkeley" width={344} height={311} />
           <Clock />
@@ -320,6 +324,7 @@ export default function Dashboard() {
         <section className={`events-band ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents} aria-label="This week's events">
           <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
         </section>
+        <StagePanel state={stage} />
         {!focus && <SpotTakeover spot={spots.takeover} now={spots.now} />}
       </main>
     </MarketsProvider>

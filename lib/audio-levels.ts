@@ -4,19 +4,15 @@
 // process tap. That helper is compiled into .data on first use, runs while at least one page is listening, and is
 // restarted if it stops. It needs macOS 14.2 or later and the "System Audio Recording" permission.
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { stat } from "node:fs/promises";
-import path from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
+import { buildSwiftHelper, swiftHelper } from "./swift-helper";
 
-const SOURCE = path.join(process.cwd(), "scripts/audio-levels/AudioLevels.swift");
-const INFO_PLIST = path.join(process.cwd(), "scripts/audio-levels/Info.plist");
-const BINARY = path.join(process.cwd(), ".data/audio-levels");
+const HELPER = swiftHelper("audio-levels", "AudioLevels.swift");
 /** The helper keeps running this long after the last page stops listening, so a reload does not restart it. */
 const IDLE_STOP_MS = 30_000;
 const RESTART_MIN_MS = 5_000;
 const RESTART_MAX_MS = 5 * 60_000;
-const COMPILE_TIMEOUT_MS = 5 * 60_000;
 
 export type AudioLevelsStatus = "off" | "starting" | "running" | "unavailable";
 /** One frame, as the helper prints it: overall loudness, then each band's, all in dB. */
@@ -36,26 +32,6 @@ const shared = globalThis as { audioLevels?: State };
 const state = (shared.audioLevels ??= { listeners: new Set(), status: "off", helper: null, restartMs: RESTART_MIN_MS, lastError: null });
 
 export const audioLevelsEnabled = () => process.platform === "darwin" && process.env.AUDIO_LEVELS !== "off";
-
-async function modified(file: string) {
-  try {
-    return (await stat(file)).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-
-/** Builds the helper when it is missing or older than its source. Resolves to an error message, or null. */
-async function compile(): Promise<string | null> {
-  const [built, source] = await Promise.all([modified(BINARY), modified(SOURCE)]);
-  if (source === null) return "scripts/audio-levels/AudioLevels.swift is missing";
-  if (built !== null && built >= source) return null;
-  // The Info.plist is linked into the binary: macOS asks for the audio recording permission in its name.
-  const args = ["-O", SOURCE, "-o", BINARY, "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", INFO_PLIST];
-  return new Promise((resolve) => {
-    execFile("swiftc", args, { timeout: COMPILE_TIMEOUT_MS }, (error, _out, stderr) => resolve(error ? `swiftc failed: ${String(stderr).trim() || error.message}` : null));
-  });
-}
 
 function scheduleRestart() {
   if (!state.listeners.size) return;
@@ -87,7 +63,7 @@ function attach(helper: ChildProcess) {
 async function start() {
   if (state.helper || state.status === "starting" || !audioLevelsEnabled()) return;
   state.status = "starting";
-  const problem = await compile();
+  const problem = await buildSwiftHelper(HELPER);
   if (problem) {
     state.status = "unavailable";
     state.lastError = problem;
@@ -99,7 +75,7 @@ async function start() {
     return;
   }
   // stdin stays open as a lifeline: the helper exits when it closes, so it never outlives this server.
-  const helper = spawn(BINARY, [], { stdio: ["pipe", "pipe", "pipe"] });
+  const helper = spawn(HELPER.binary, [], { stdio: ["pipe", "pipe", "pipe"] });
   state.helper = helper;
   attach(helper);
 }
