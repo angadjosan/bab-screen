@@ -63,7 +63,9 @@ function hearMore(capture: Capture, heard: Required<Pick<Heard, "text" | "final"
   if (heard.final) {
     capture.settled = [capture.settled, words].filter(Boolean).join(" ");
     capture.live = "";
-    capture.askTimer = setTimeout(() => ask(capture), PAUSE_MS);
+    // "Hey worm" is often settled as a phrase of its own before the question starts: only a question with words in
+    // it is asked. One that never comes is given up on by the timer set in wake().
+    if (capture.settled) capture.askTimer = setTimeout(() => ask(capture), PAUSE_MS);
   } else {
     capture.live = words;
   }
