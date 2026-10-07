@@ -50,11 +50,21 @@ function errorCode(error: unknown): string {
   const name = error instanceof Error ? error.name : "";
   if (name === "TimeoutError" || name === "AbortError") return "timeout";
   // fetch() reports DNS, TLS and socket failures as a TypeError whose cause carries the code.
-  const cause = error instanceof Error ? (error.cause as { code?: unknown; name?: unknown } | undefined) : undefined;
-  const detail = typeof cause?.code === "string" ? cause.code : typeof cause?.name === "string" ? cause.name : null;
+  const detail = causeDetail(error);
   if (detail === "TimeoutError" || detail === "AbortError" || detail === "UND_ERR_CONNECT_TIMEOUT") return "timeout";
-  if (error instanceof TypeError) return detail && /^[A-Z0-9_]{3,40}$/.test(detail) ? `network_error (${detail})` : "network_error";
+  if (error instanceof TypeError) return networkErrorCode(detail);
   return `internal_error${name ? ` (${name.slice(0, 40)})` : ""}`;
+}
+
+/** The code (or else the name) on an error's cause, when it has one. */
+function causeDetail(error: unknown): string | null {
+  const cause = error instanceof Error ? (error.cause as { code?: unknown; name?: unknown } | undefined) : undefined;
+  if (typeof cause?.code === "string") return cause.code;
+  return typeof cause?.name === "string" ? cause.name : null;
+}
+
+function networkErrorCode(detail: string | null): string {
+  return detail && /^[A-Z0-9_]{3,40}$/.test(detail) ? `network_error (${detail})` : "network_error";
 }
 
 /** Reads at most `limit` bytes of a body, so a runaway response cannot fill memory. */
@@ -142,25 +152,17 @@ async function fetchRss(source: RssSource, context: FetchContext): Promise<Sourc
   const maxAge = source.maxAgeHours ?? MAX_AGE_HOURS;
   const cache = context.caches.get(source.name);
   const cached = () => fresh(cache?.items ?? [], context.now, maxAge);
-  if (cache && source.everyMinutes && context.now - cache.fetchedAt < source.everyMinutes * 60_000 - 30_000) {
+  if (fetchedRecently(source, cache, context.now)) {
     return { name: source.name, kind: "news", ok: true, items: cached(), error: null };
   }
   try {
-    const conditional: Record<string, string> = { Accept: "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.5" };
-    if (cache?.etag) conditional["If-None-Match"] = cache.etag;
-    if (cache?.lastModified) conditional["If-Modified-Since"] = cache.lastModified;
-    const response = await get(source.url, conditional);
+    const response = await get(source.url, conditionalHeaders(cache));
     if (response.status === 304 && cache) {
       cache.fetchedAt = context.now;
       return { name: source.name, kind: "news", ok: true, items: cached(), error: null };
     }
     if (response.status < 200 || response.status >= 300) throw new HttpError(`http_${response.status}`);
-    const parsed = parseFeed(response.body, source.name, context.now);
-    if (!parsed.recognised) throw new HttpError("not_a_feed");
-    const items: FeedItem[] = [];
-    for (const { categories, ...item } of fresh(parsed.entries, context.now, maxAge) as (FeedItem & { categories: string[] })[]) {
-      if (!rejectReason(item, categories)) items.push(item);
-    }
+    const items = feedItems(response.body, source.name, context.now, maxAge);
     context.caches.set(source.name, {
       etag: response.headers.get("etag") ?? undefined,
       lastModified: response.headers.get("last-modified") ?? undefined,
@@ -174,6 +176,28 @@ async function fetchRss(source: RssSource, context: FetchContext): Promise<Sourc
   }
 }
 
+function fetchedRecently(source: RssSource, cache: SourceCache | undefined, now: number): boolean {
+  return Boolean(cache && source.everyMinutes && now - cache.fetchedAt < source.everyMinutes * 60_000 - 30_000);
+}
+
+function conditionalHeaders(cache: SourceCache | undefined): Record<string, string> {
+  const conditional: Record<string, string> = { Accept: "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.5" };
+  if (cache?.etag) conditional["If-None-Match"] = cache.etag;
+  if (cache?.lastModified) conditional["If-Modified-Since"] = cache.lastModified;
+  return conditional;
+}
+
+/** The feed's recent entries that pass the filters, without their categories. */
+function feedItems(body: string, sourceName: string, now: number, maxAge: number): FeedItem[] {
+  const parsed = parseFeed(body, sourceName, now);
+  if (!parsed.recognised) throw new HttpError("not_a_feed");
+  const items: FeedItem[] = [];
+  for (const { categories, ...item } of fresh(parsed.entries, now, maxAge) as (FeedItem & { categories: string[] })[]) {
+    if (!rejectReason(item, categories)) items.push(item);
+  }
+  return items;
+}
+
 // --- Hacker News ---------------------------------------------------------------------------------
 
 async function fetchHackerNews(context: FetchContext): Promise<SourceResult> {
@@ -184,25 +208,8 @@ async function fetchHackerNews(context: FetchContext): Promise<SourceResult> {
     if (!hits) throw new HttpError("unexpected_shape");
     const items: FeedItem[] = [];
     for (const hit of hits) {
-      if (!isRecord(hit)) continue;
-      const title = text(hit.title);
-      const id = text(hit.objectID) ?? (typeof hit.story_id === "number" ? String(hit.story_id) : null);
-      const published = Date.parse(text(hit.created_at) ?? "");
-      if (!title || !id || !/^\d+$/.test(id) || !Number.isFinite(published)) continue;
-      if (typeof hit.points !== "number" || hit.points < HACKER_NEWS.minPoints) continue;
-      const item: FeedItem = {
-        id: makeId(name, id),
-        kind: "news",
-        source: name,
-        author: null,
-        handle: null,
-        title: clip(tidy(decodeEntities(title)), 220),
-        summary: null,
-        url: canonicalUrl(text(hit.url)) ?? `https://news.ycombinator.com/item?id=${id}`,
-        publishedAt: new Date(Math.min(published, context.now)).toISOString(),
-        imageUrl: null,
-      };
-      if (!rejectReason(item)) items.push(item);
+      const item = hackerNewsItem(hit, name, context.now);
+      if (item && !rejectReason(item)) items.push(item);
     }
     const kept = fresh(items, context.now, MAX_AGE_HOURS);
     context.caches.set(name, { fetchedAt: context.now, items: kept });
@@ -213,27 +220,66 @@ async function fetchHackerNews(context: FetchContext): Promise<SourceResult> {
   }
 }
 
+/** A story's title, numeric ID, time and link, or null when it is malformed or has too few points. */
+function hackerNewsStory(hit: unknown): { title: string; id: string; published: number; url: string | null } | null {
+  if (!isRecord(hit)) return null;
+  const title = text(hit.title);
+  const id = text(hit.objectID) ?? (typeof hit.story_id === "number" ? String(hit.story_id) : null);
+  const published = Date.parse(text(hit.created_at) ?? "");
+  if (!title || !id || !/^\d+$/.test(id) || !Number.isFinite(published)) return null;
+  if (hasTooFewPoints(hit)) return null;
+  return { title, id, published, url: text(hit.url) };
+}
+
+function hasTooFewPoints(hit: Record<string, unknown>): boolean {
+  return typeof hit.points !== "number" || hit.points < HACKER_NEWS.minPoints;
+}
+
+function hackerNewsItem(hit: unknown, name: string, now: number): FeedItem | null {
+  const story = hackerNewsStory(hit);
+  if (!story) return null;
+  return {
+    id: makeId(name, story.id),
+    kind: "news",
+    source: name,
+    author: null,
+    handle: null,
+    title: clip(tidy(decodeEntities(story.title)), 220),
+    summary: null,
+    url: canonicalUrl(story.url) ?? `https://news.ycombinator.com/item?id=${story.id}`,
+    publishedAt: new Date(Math.min(story.published, now)).toISOString(),
+    imageUrl: null,
+  };
+}
+
 // --- Bluesky -------------------------------------------------------------------------------------
 
-/** Post text with each link facet (shown truncated, "example.com/a-long-pa...") replaced by its host. */
-function blueskyText(record: Record<string, unknown>): string {
-  const raw = text(record.text) ?? "";
-  const facets = Array.isArray(record.facets) ? record.facets : [];
-  const links: { start: number; end: number; host: string }[] = [];
-  for (const facet of facets) {
-    if (!isRecord(facet) || !isRecord(facet.index) || !Array.isArray(facet.features)) continue;
-    const { byteStart, byteEnd } = facet.index;
-    if (typeof byteStart !== "number" || typeof byteEnd !== "number" || byteEnd <= byteStart) continue;
-    for (const feature of facet.features) {
-      if (!isRecord(feature) || feature.$type !== "app.bsky.richtext.facet#link") continue;
-      try {
-        links.push({ start: byteStart, end: byteEnd, host: new URL(String(feature.uri)).hostname.replace(/^www\./, "") });
-      } catch {
-        // Not a URL; leave the text as written.
-      }
+type LinkFacet = { start: number; end: number; host: string };
+
+/** A facet's byte range and features, or null when it is malformed or empty. */
+function facetRange(facet: unknown): { start: number; end: number; features: unknown[] } | null {
+  if (!isRecord(facet) || !isRecord(facet.index) || !Array.isArray(facet.features)) return null;
+  const { byteStart, byteEnd } = facet.index;
+  if (typeof byteStart !== "number" || typeof byteEnd !== "number" || byteEnd <= byteStart) return null;
+  return { start: byteStart, end: byteEnd, features: facet.features };
+}
+
+function facetLinks(facet: unknown): LinkFacet[] {
+  const range = facetRange(facet);
+  if (!range) return [];
+  const links: LinkFacet[] = [];
+  for (const feature of range.features) {
+    if (!isRecord(feature) || feature.$type !== "app.bsky.richtext.facet#link") continue;
+    try {
+      links.push({ start: range.start, end: range.end, host: new URL(String(feature.uri)).hostname.replace(/^www\./, "") });
+    } catch {
+      // Not a URL; leave the text as written.
     }
   }
-  if (!links.length) return tidy(raw);
+  return links;
+}
+
+function replaceLinks(raw: string, links: LinkFacet[]): string {
   // Facet offsets are UTF-8 byte positions.
   const bytes = Buffer.from(raw, "utf8");
   let out = "";
@@ -243,7 +289,16 @@ function blueskyText(record: Record<string, unknown>): string {
     out += bytes.subarray(at, link.start).toString("utf8") + link.host;
     at = link.end;
   }
-  return tidy(out + bytes.subarray(at).toString("utf8"));
+  return out + bytes.subarray(at).toString("utf8");
+}
+
+/** Post text with each link facet (shown truncated, "example.com/a-long-pa...") replaced by its host. */
+function blueskyText(record: Record<string, unknown>): string {
+  const raw = text(record.text) ?? "";
+  const facets = Array.isArray(record.facets) ? record.facets : [];
+  const links = facets.flatMap(facetLinks);
+  if (!links.length) return tidy(raw);
+  return tidy(replaceLinks(raw, links));
 }
 
 function blueskyPosts(data: unknown, now: number): FeedItem[] {
@@ -251,40 +306,75 @@ function blueskyPosts(data: unknown, now: number): FeedItem[] {
   if (!feed) throw new HttpError("unexpected_shape");
   const items: FeedItem[] = [];
   for (const entry of feed) {
-    if (!isRecord(entry) || entry.reason || entry.reply) continue; // reposts and replies
-    const post = entry.post;
-    if (!isRecord(post) || !isRecord(post.record) || !isRecord(post.author)) continue;
-    const record = post.record;
-    if (record.reply) continue;
-    // Anything carrying a moderation or self-applied content label stays off the wall.
-    if (Array.isArray(post.labels) && post.labels.length) continue;
-    if (isRecord(record.labels) && Array.isArray(record.labels.values) && record.labels.values.length) continue;
-    if (Array.isArray(record.langs) && record.langs.length && !record.langs.some((lang) => typeof lang === "string" && lang.toLowerCase().startsWith("en"))) continue;
-    const handle = text(post.author.handle);
-    const uri = text(post.uri);
-    const published = Date.parse(text(record.createdAt) ?? "");
-    const key = uri ? uri.split("/").pop() : null;
-    if (!handle || !uri || !key || !/^[a-z0-9.-]+$/i.test(handle) || !/^[a-z0-9]+$/i.test(key) || !Number.isFinite(published)) continue;
-    const body = blueskyText(record);
-    if (body.length < POST_MIN) continue;
-    const embed = isRecord(post.embed) ? post.embed : null;
-    const firstImage = embed && Array.isArray(embed.images) && isRecord(embed.images[0]) ? text(embed.images[0].thumb) : null;
-    const external = embed && isRecord(embed.external) ? text(embed.external.thumb) : null;
-    const item: FeedItem = {
-      id: makeId(BLUESKY.name, uri),
-      kind: "tweet",
-      source: BLUESKY.name,
-      author: text(post.author.displayName) ? tidy(String(post.author.displayName)) : handle,
-      handle: `@${handle}`,
-      title: clip(body, POST_MAX),
-      summary: null,
-      url: `https://bsky.app/profile/${handle}/post/${key}`,
-      publishedAt: new Date(Math.min(published, now)).toISOString(),
-      imageUrl: httpsImage(firstImage ?? external),
-    };
-    if (!rejectReason(item)) items.push(item);
+    const item = blueskyItem(entry, now);
+    if (item && !rejectReason(item)) items.push(item);
   }
   return items;
+}
+
+type BlueskyPost = { post: Record<string, unknown>; record: Record<string, unknown>; author: Record<string, unknown> };
+
+/** The entry's post, record and author, or null for reposts, replies and malformed entries. */
+function originalPost(entry: unknown): BlueskyPost | null {
+  if (!isRecord(entry) || entry.reason || entry.reply) return null; // reposts and replies
+  const post = entry.post;
+  if (!isRecord(post) || !isRecord(post.record) || !isRecord(post.author)) return null;
+  if (post.record.reply) return null;
+  return { post, record: post.record, author: post.author };
+}
+
+/** Anything carrying a moderation or self-applied content label stays off the wall. */
+function isLabelled({ post, record }: BlueskyPost): boolean {
+  if (Array.isArray(post.labels) && post.labels.length) return true;
+  return Boolean(isRecord(record.labels) && Array.isArray(record.labels.values) && record.labels.values.length);
+}
+
+function isNotEnglish({ record }: BlueskyPost): boolean {
+  return Boolean(
+    Array.isArray(record.langs) &&
+      record.langs.length &&
+      !record.langs.some((lang) => typeof lang === "string" && lang.toLowerCase().startsWith("en")),
+  );
+}
+
+/** The author's handle, the post's URI and record key, and when it was posted; null if any is unusable. */
+function postIdentity({ post, record, author }: BlueskyPost): { handle: string; uri: string; key: string; published: number } | null {
+  const handle = text(author.handle);
+  const uri = text(post.uri);
+  const published = Date.parse(text(record.createdAt) ?? "");
+  const key = uri ? uri.split("/").pop() : null;
+  if (!handle || !uri || !key || !/^[a-z0-9.-]+$/i.test(handle) || !/^[a-z0-9]+$/i.test(key) || !Number.isFinite(published)) return null;
+  return { handle, uri, key, published };
+}
+
+function postImage(post: Record<string, unknown>): string | null {
+  const embed = isRecord(post.embed) ? post.embed : null;
+  const firstImage = embed && Array.isArray(embed.images) && isRecord(embed.images[0]) ? text(embed.images[0].thumb) : null;
+  const external = embed && isRecord(embed.external) ? text(embed.external.thumb) : null;
+  return httpsImage(firstImage ?? external);
+}
+
+function blueskyItem(entry: unknown, now: number): FeedItem | null {
+  const original = originalPost(entry);
+  if (!original || isLabelled(original) || isNotEnglish(original)) return null;
+  const identity = postIdentity(original);
+  if (!identity) return null;
+  const { handle, uri, key, published } = identity;
+  const body = blueskyText(original.record);
+  if (body.length < POST_MIN) return null;
+  const { author } = original;
+  return {
+    id: makeId(BLUESKY.name, uri),
+    kind: "tweet",
+    source: BLUESKY.name,
+    author: text(author.displayName) ? tidy(String(author.displayName)) : handle,
+    handle: `@${handle}`,
+    title: clip(body, POST_MAX),
+    summary: null,
+    url: `https://bsky.app/profile/${handle}/post/${key}`,
+    publishedAt: new Date(Math.min(published, now)).toISOString(),
+    imageUrl: postImage(original.post),
+  };
 }
 
 async function fetchBluesky(context: FetchContext): Promise<SourceResult> {

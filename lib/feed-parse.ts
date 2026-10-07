@@ -32,7 +32,8 @@ export function decodeEntities(text: string): string {
 
 // C0/C1 controls, zero-width characters, bidi overrides and isolates, BOM, and the Unicode
 // tag block (invisible text, used to hide instructions).
-const INVISIBLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]|\udb40[\udc00-\udc7f]/g;
+// eslint-disable-next-line no-control-regex -- matching control characters is the point: they are stripped from feed text.
+const INVISIBLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]|\udb40[\udc00-\udc7f]/g;
 
 /** One line of plain text: invisible characters removed, whitespace collapsed. */
 export function tidy(text: string): string {
@@ -258,36 +259,50 @@ export function parseFeed(xml: string, source: string, now = Date.now()): { reco
   for (let match = blocks.exec(xml); match && seen < MAX_ENTRIES; match = blocks.exec(xml)) {
     seen += 1;
     try {
-      const block = match[2];
-      const published = parseDate(tagText(block, "pubDate", "published", "dc:date", "updated"));
-      if (published === null || published > now + FUTURE_SLACK_MS) continue;
-      const title = tagText(block, "title");
-      const url = canonicalUrl(entryLink(block));
-      if (!title || !url) continue;
-      const guid = tagRaw(block, "guid") ?? tagRaw(block, "id");
-      const key = (guid !== null && tidy(xmlText(guid))) || url;
-      const atomAuthor = tagRaw(block, "author");
-      const author =
-        tagText(block, "dc:creator") ??
-        (atomAuthor !== null ? (tagText(atomAuthor, "name") ?? htmlToText(xmlText(atomAuthor))) : null);
-      entries.push({
-        id: makeId(source, key),
-        kind: "news",
-        source,
-        author: cleanAuthor(author, source),
-        handle: null,
-        title: clip(title, TITLE_MAX),
-        summary: cleanSummary(tagText(block, "description", "summary", "media:description"), title, source),
-        url,
-        publishedAt: new Date(Math.min(published, now)).toISOString(),
-        imageUrl: entryImage(block),
-        categories: categories(block),
-      });
+      const entry = parseEntry(match[2], source, now);
+      if (entry) entries.push(entry);
     } catch {
       // One odd entry must not cost the rest of the feed.
     }
   }
   return { recognised: recognised || entries.length > 0, entries };
+}
+
+/** One <item> or <entry> block as a news item, or null without a title, a usable link or a sane date. */
+function parseEntry(block: string, source: string, now: number): ParsedEntry | null {
+  const published = parseDate(tagText(block, "pubDate", "published", "dc:date", "updated"));
+  if (published === null || published > now + FUTURE_SLACK_MS) return null;
+  const title = tagText(block, "title");
+  const url = canonicalUrl(entryLink(block));
+  if (!title || !url) return null;
+  const key = entryKey(block, url);
+  const author = entryAuthor(block);
+  return {
+    id: makeId(source, key),
+    kind: "news",
+    source,
+    author: cleanAuthor(author, source),
+    handle: null,
+    title: clip(title, TITLE_MAX),
+    summary: cleanSummary(tagText(block, "description", "summary", "media:description"), title, source),
+    url,
+    publishedAt: new Date(Math.min(published, now)).toISOString(),
+    imageUrl: entryImage(block),
+    categories: categories(block),
+  };
+}
+
+function entryKey(block: string, url: string): string {
+  const guid = tagRaw(block, "guid") ?? tagRaw(block, "id");
+  return (guid !== null && tidy(xmlText(guid))) || url;
+}
+
+function entryAuthor(block: string): string | null {
+  const atomAuthor = tagRaw(block, "author");
+  return (
+    tagText(block, "dc:creator") ??
+    (atomAuthor !== null ? (tagText(atomAuthor, "name") ?? htmlToText(xmlText(atomAuthor))) : null)
+  );
 }
 
 // --- Filters -------------------------------------------------------------------------------------

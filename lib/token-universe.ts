@@ -104,7 +104,6 @@ export function matchUniverse(
   hyperliquid: Map<string, { market: string; lot: number; price: number }>,
   gate: Map<string, { market: string; price: number; volumeUsd: number }>,
 ): UniverseToken[] {
-  const near = (price: number, reference: number) => Number.isFinite(price) && price > 0 && Math.abs(price - reference) / reference <= PRICE_TOLERANCE;
   const tokens: UniverseToken[] = [];
   const taken = new Set<string>();
   const ranked = coins
@@ -115,17 +114,40 @@ export function matchUniverse(
     if (!/^[A-Z0-9]{1,10}$/.test(symbol) || taken.has(symbol)) continue;
     // The largest coin owns the ticker whether or not it qualifies: a smaller namesake never gets it.
     taken.add(symbol);
-    const name = cleanName(coin.name);
-    const reference = Number(coin.current_price);
-    if (!name || EXCLUDED.has(symbol) || NOT_A_TOKEN.test(String(coin.name)) || !Number.isFinite(reference) || reference <= 0) continue;
-    const rank = coin.market_cap_rank as number;
-    const perp = hyperliquid.get(symbol);
-    const spot = gate.get(symbol);
-    if (perp && near(perp.price / perp.lot, reference)) tokens.push({ symbol, name, venue: "hyperliquid", market: perp.market, lot: perp.lot, rank });
-    else if (spot && spot.volumeUsd >= GATE_MIN_VOLUME_USD && near(spot.price, reference)) tokens.push({ symbol, name, venue: "gate", market: spot.market, lot: 1, rank });
+    const token = listedToken(coin, symbol, hyperliquid, gate);
+    if (!token) continue;
+    tokens.push(token);
     if (tokens.length === MAX_TOKENS) break;
   }
   return tokens;
+}
+
+const isNear = (price: number, reference: number) => Number.isFinite(price) && price > 0 && Math.abs(price - reference) / reference <= PRICE_TOLERANCE;
+
+/** The coin's display name and CoinGecko price, or null when it is kept off the list. */
+function eligibleCoin(coin: CoinGeckoCoin, symbol: string): { name: string; reference: number } | null {
+  const name = cleanName(coin.name);
+  const reference = Number(coin.current_price);
+  if (!name || EXCLUDED.has(symbol) || NOT_A_TOKEN.test(String(coin.name)) || !Number.isFinite(reference) || reference <= 0) return null;
+  return { name, reference };
+}
+
+/** The coin as a token on the venue that lists it at about CoinGecko's price, or null if none does or it is left out. */
+function listedToken(
+  coin: CoinGeckoCoin,
+  symbol: string,
+  hyperliquid: Map<string, { market: string; lot: number; price: number }>,
+  gate: Map<string, { market: string; price: number; volumeUsd: number }>,
+): UniverseToken | null {
+  const eligible = eligibleCoin(coin, symbol);
+  if (!eligible) return null;
+  const { name, reference } = eligible;
+  const rank = coin.market_cap_rank as number;
+  const perp = hyperliquid.get(symbol);
+  const spot = gate.get(symbol);
+  if (perp && isNear(perp.price / perp.lot, reference)) return { symbol, name, venue: "hyperliquid", market: perp.market, lot: perp.lot, rank };
+  if (spot && spot.volumeUsd >= GATE_MIN_VOLUME_USD && isNear(spot.price, reference)) return { symbol, name, venue: "gate", market: spot.market, lot: 1, rank };
+  return null;
 }
 
 async function build(): Promise<UniverseToken[]> {

@@ -279,8 +279,22 @@ export function ensureFeedLoop(): void {
 
 function response(): FeedResponse {
   const state = runtime.state;
+  const base = responseBase(state);
+  if (!state.items.length) {
+    if (runtime.lastRefreshFailed) return { status: "error", ...base, message: runtime.lastError ?? "refresh failed" };
+    return { status: "empty", ...base, message: "First refresh in progress" };
+  }
+  const failing = state.sources.filter((source) => !source.ok);
+  const stale = state.updatedAt !== null && Date.now() - Date.parse(state.updatedAt) > STALE_AFTER_MS;
+  const notes = healthNotes(state, stale, failing);
+  const degraded = stale || runtime.lastRefreshFailed || failing.length > 0;
+  return { status: degraded ? "degraded" : "ok", ...base, ...(notes.length ? { message: notes.join("; ") } : {}) };
+}
+
+/** What every answer carries: the selection, its sources, and which model picked it (when one did). */
+function responseBase(state: Stored) {
   const picked = state.curation === "agent" && state.agent?.ok ? state.agent : null;
-  const base = {
+  return {
     items: state.items,
     updatedAt: state.updatedAt,
     sources: state.sources,
@@ -288,20 +302,28 @@ function response(): FeedResponse {
     agent: picked?.agent ?? null,
     agentModel: picked?.model ?? null,
   };
-  if (!state.items.length) {
-    if (runtime.lastRefreshFailed) return { status: "error", ...base, message: runtime.lastError ?? "refresh failed" };
-    return { status: "empty", ...base, message: "First refresh in progress" };
-  }
-  const failing = state.sources.filter((source) => !source.ok);
-  const stale = state.updatedAt !== null && Date.now() - Date.parse(state.updatedAt) > STALE_AFTER_MS;
-  const notes = [
+}
+
+/** Why the selection is degraded, if it is, one note per reason. */
+function healthNotes(state: Stored, stale: boolean, failing: FeedSourceStatus[]) {
+  return [
     stale ? "selection is stale" : null,
     runtime.lastRefreshFailed ? (runtime.lastError ?? "last refresh failed") : null,
-    failing.length ? `${failing.length} source${failing.length === 1 ? "" : "s"} failing: ${failing.map((source) => source.name).join(", ")}` : null,
-    state.curation === "fallback" && state.agent?.error && state.agent.error !== "agent_off" ? `AI curation unavailable (${state.agent.error}); showing the newest items` : null,
+    failingNote(failing),
+    curationNote(state),
   ].filter(Boolean);
-  const degraded = stale || runtime.lastRefreshFailed || failing.length > 0;
-  return { status: degraded ? "degraded" : "ok", ...base, ...(notes.length ? { message: notes.join("; ") } : {}) };
+}
+
+function failingNote(failing: FeedSourceStatus[]): string | null {
+  if (!failing.length) return null;
+  return `${failing.length} source${failing.length === 1 ? "" : "s"} failing: ${failing.map((source) => source.name).join(", ")}`;
+}
+
+function curationNote(state: Stored): string | null {
+  if (state.curation === "fallback" && state.agent?.error && state.agent.error !== "agent_off") {
+    return `AI curation unavailable (${state.agent.error}); showing the newest items`;
+  }
+  return null;
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { NewsworthyResponse, NewsworthyToken } from "@/lib/feed-types";
-import { HL_WS_URL, SET_ASSETS, fetchGateQuotes, fetchHyperliquidQuotes, formatChange, formatPrice, makeAsset, quoteFromCtx, type Asset, type Quote, type Quotes } from "@/lib/markets";
+import { HL_WS_URL, SET_ASSETS, fetchGateQuotes, fetchHyperliquidQuotes, formatChange, formatPrice, makeAsset, quoteFromCtx, type Asset, type Quote, type Quotes, type Venue } from "@/lib/markets";
 import { CandleChart } from "./CandleChart";
 import styles from "./Markets.module.css";
 
@@ -84,20 +84,40 @@ function cleanStories(raw: unknown): Story[] {
   if (!Array.isArray(raw)) return [];
   const stories: Story[] = [];
   for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue;
-    const token = entry as Partial<Record<keyof NewsworthyToken, unknown>>;
-    const symbol = text(token.symbol, 12);
-    const name = text(token.name, 48);
-    const market = text(token.market, 24);
-    const summary = text(token.summary, NEWS_SUMMARY_MAX_CHARS);
-    if (!symbol || !name || !market || !summary || (token.venue !== "hyperliquid" && token.venue !== "gate")) continue;
-    const asset = makeAsset(token.venue, market, symbol, name, Number(token.lot));
-    if (!asset || SET_COINS.has(asset.coin) || SET_SYMBOLS.has(symbol) || stories.some((s) => s.asset.coin === asset.coin)) continue;
-    const outlets = Array.isArray(token.outlets) ? token.outlets.map((outlet) => text(outlet, 40)).filter((outlet): outlet is string => outlet !== null).slice(0, 4) : [];
-    stories.push({ asset, summary, outlets, newestAt: text(token.newestAt, 40) ?? "" });
+    const story = cleanStory(entry, stories);
+    if (!story) continue;
+    stories.push(story);
     if (stories.length === NEWS_MAX_TOKENS) break;
   }
   return stories;
+}
+
+type RawToken = Partial<Record<keyof NewsworthyToken, unknown>>;
+
+/** One route token as a story, or null when it is malformed, a set token, or already in `kept`. */
+function cleanStory(entry: unknown, kept: Story[]): Story | null {
+  if (!entry || typeof entry !== "object") return null;
+  const token = entry as RawToken;
+  const fields = storyFields(token);
+  if (!fields) return null;
+  const { symbol, summary } = fields;
+  const asset = makeAsset(fields.venue, fields.market, symbol, fields.name, Number(token.lot));
+  if (!asset || SET_COINS.has(asset.coin) || SET_SYMBOLS.has(symbol) || kept.some((s) => s.asset.coin === asset.coin)) return null;
+  const outlets = storyOutlets(token.outlets);
+  return { asset, summary, outlets, newestAt: text(token.newestAt, 40) ?? "" };
+}
+
+function storyFields(token: RawToken): { symbol: string; name: string; market: string; summary: string; venue: Venue } | null {
+  const symbol = text(token.symbol, 12);
+  const name = text(token.name, 48);
+  const market = text(token.market, 24);
+  const summary = text(token.summary, NEWS_SUMMARY_MAX_CHARS);
+  if (!symbol || !name || !market || !summary || (token.venue !== "hyperliquid" && token.venue !== "gate")) return null;
+  return { symbol, name, market, summary, venue: token.venue };
+}
+
+function storyOutlets(outlets: unknown): string[] {
+  return Array.isArray(outlets) ? outlets.map((outlet) => text(outlet, 40)).filter((outlet): outlet is string => outlet !== null).slice(0, 4) : [];
 }
 
 /** `list` in the order it is next due: starting after the entry shown last, which comes round at the end. */

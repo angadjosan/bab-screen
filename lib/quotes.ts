@@ -172,6 +172,41 @@ function splitLabel(body: string): { target: string; label: string | null } {
   return { target: body.slice(0, index), label: label || null };
 }
 
+type RenderedToken = { text: string; link?: boolean; broadcast?: boolean };
+
+function renderMention(body: string, names: ReadonlyMap<string, string>): RenderedToken {
+  const { target, label } = splitLabel(body);
+  const name = (names.get(target) ?? label?.replace(/^@/, "") ?? "").replace(MARKS, "").trim();
+  return { text: `${M_OPEN}${name}${M_CLOSE}` };
+}
+
+function renderChannel(body: string): RenderedToken {
+  const { label } = splitLabel(body);
+  return { text: label ? `#${label.replace(/^#/, "")}` : "" };
+}
+
+function renderSpecialMention(body: string): RenderedToken {
+  const { target, label } = splitLabel(body);
+  if (target === "here" || target === "channel" || target === "everyone") return { text: "", broadcast: true };
+  return { text: label ?? "" };
+}
+
+function renderLink(body: string): RenderedToken {
+  const { target, label } = splitLabel(body);
+  if (/^(mailto|tel):/i.test(target)) return { text: label ?? target.replace(/^(mailto|tel):/i, "") };
+  // Slack turns a bare "example.com" into <http://example.com|example.com>: that is text someone typed.
+  if (label && !/^[a-z][a-z0-9+.-]*:\/\//i.test(label)) return { text: label };
+  return { text: "", link: true };
+}
+
+/** One Slack control sequence (the part between < and >) as text. */
+function renderToken(body: string, names: ReadonlyMap<string, string>): RenderedToken {
+  if (body.startsWith("@")) return renderMention(body.slice(1), names);
+  if (body.startsWith("#")) return renderChannel(body.slice(1));
+  if (body.startsWith("!")) return renderSpecialMention(body.slice(1));
+  return renderLink(body);
+}
+
 /** Slack's wire format to plain text, with mentions marked. Links and @channel are reported, not rendered. */
 function renderSlack(raw: string, names: ReadonlyMap<string, string>): { text: string; link: boolean; broadcast: boolean } {
   let text = "";
@@ -182,25 +217,10 @@ function renderSlack(raw: string, names: ReadonlyMap<string, string>): { text: s
   for (const match of source.matchAll(TOKEN)) {
     text += decodeEntities(source.slice(cursor, match.index));
     cursor = (match.index ?? 0) + match[0].length;
-    const body = match[1];
-    if (body.startsWith("@")) {
-      const { target, label } = splitLabel(body.slice(1));
-      const name = (names.get(target) ?? label?.replace(/^@/, "") ?? "").replace(MARKS, "").trim();
-      text += `${M_OPEN}${name}${M_CLOSE}`;
-    } else if (body.startsWith("#")) {
-      const { label } = splitLabel(body.slice(1));
-      text += label ? `#${label.replace(/^#/, "")}` : "";
-    } else if (body.startsWith("!")) {
-      const { target, label } = splitLabel(body.slice(1));
-      if (target === "here" || target === "channel" || target === "everyone") broadcast = true;
-      else text += label ?? "";
-    } else {
-      const { target, label } = splitLabel(body);
-      if (/^(mailto|tel):/i.test(target)) text += label ?? target.replace(/^(mailto|tel):/i, "");
-      // Slack turns a bare "example.com" into <http://example.com|example.com>: that is text someone typed.
-      else if (label && !/^[a-z][a-z0-9+.-]*:\/\//i.test(label)) text += label;
-      else link = true;
-    }
+    const token = renderToken(match[1], names);
+    text += token.text;
+    if (token.link) link = true;
+    if (token.broadcast) broadcast = true;
   }
   text += decodeEntities(source.slice(cursor));
   return { text, link, broadcast };
@@ -218,7 +238,7 @@ function stripEmojiCodes(text: string): string {
 function stripFormatting(text: string): string {
   let out = text.replace(/`([^`\n]+)`/g, "$1");
   for (let pass = 0; pass < 3; pass += 1) {
-    const next = out.replace(/(^|[\s(\["“'‘])([*_~])(\S(?:[^\n]*?\S)?)\2(?=$|[\s.,!?;:)\]"”'’])/gm, "$1$3");
+    const next = out.replace(/(^|[\s(["“'‘])([*_~])(\S(?:[^\n]*?\S)?)\2(?=$|[\s.,!?;:)\]"”'’])/gm, "$1$3");
     if (next === out) break;
     out = next;
   }
@@ -226,7 +246,7 @@ function stripFormatting(text: string): string {
 }
 
 const visible = (value: string): string => value.replace(MARKS, "");
-const tidy = (value: string): string => value.replace(/[ \t ]+/g, " ").trim();
+const tidy = (value: string): string => value.replace(/[ \t\u00a0]+/g, " ").trim();
 
 function isNameLike(head: string): boolean {
   const words = head.split(/\s+/).filter(Boolean);
@@ -257,36 +277,51 @@ function asWho(tail: string, loose: boolean): string | null {
 
 type Split = { body: string; who: string };
 
-/** "words" - Name, words — Name, Name: words, @mention "words". */
-function splitAttribution(line: string): Split | null {
+/** '"words" - Name' and '"words" Name'. */
+function splitAfterQuoted(line: string): Split | null {
   const quoted = QUOTED_TAIL.exec(line);
-  if (quoted) {
-    // Without a dash, only a real name may follow the closing mark: '"gm" lol' is not said by "lol".
-    const who = asWho(quoted[3], Boolean(quoted[2]));
-    if (who) return { body: quoted[1], who };
-  }
+  if (!quoted) return null;
+  // Without a dash, only a real name may follow the closing mark: '"gm" lol' is not said by "lol".
+  const who = asWho(quoted[3], Boolean(quoted[2]));
+  return who ? { body: quoted[1], who } : null;
+}
 
+function lastInnerDash(line: string): RegExpMatchArray | null {
   let separator: RegExpMatchArray | null = null;
   for (const match of line.matchAll(DASH_SEPARATOR)) if ((match.index ?? 0) > 0) separator = match;
-  if (separator) {
-    const index = separator.index ?? 0;
-    const body = line.slice(0, index).trim();
-    const strongDash = /[–—~]/.test(separator[0]);
-    const tail = line.slice(index + separator[0].length);
-    // In this channel people sign in lower case ("words - nithya"), so after a plain hyphen a word or two of letters is a name.
-    const who = asWho(tail, strongDash || STARTS_QUOTED.test(body)) ?? (SHORT_NAME.test(visible(tail).trim()) ? tidy(tail) : null);
-    if (who && body) return { body, who };
-  }
+  return separator;
+}
 
+/** "words - Name" and "words — Name", split at the last dash that is not at the very start. */
+function splitAtLastDash(line: string): Split | null {
+  const separator = lastInnerDash(line);
+  if (!separator) return null;
+  const index = separator.index ?? 0;
+  const body = line.slice(0, index).trim();
+  const strongDash = /[–—~]/.test(separator[0]);
+  const tail = line.slice(index + separator[0].length);
+  // In this channel people sign in lower case ("words - nithya"), so after a plain hyphen a word or two of letters is a name.
+  const who = asWho(tail, strongDash || STARTS_QUOTED.test(body)) ?? (SHORT_NAME.test(visible(tail).trim()) ? tidy(tail) : null);
+  return who && body ? { body, who } : null;
+}
+
+/** '@mention "words"'. */
+function splitMentionBeforeQuoted(line: string): Split | null {
   const before = MENTION_THEN_QUOTED.exec(line);
-  if (before) return { body: before[2], who: before[1] };
+  return before ? { body: before[2], who: before[1] } : null;
+}
 
+/** "Name: words". */
+function splitAtSpeaker(line: string): Split | null {
   const speaker = SPEAKER.exec(line);
-  if (speaker) {
-    const who = asWho(speaker[1], false);
-    if (who) return { body: speaker[2], who };
-  }
-  return null;
+  if (!speaker) return null;
+  const who = asWho(speaker[1], false);
+  return who ? { body: speaker[2], who } : null;
+}
+
+/** "words" - Name, words — Name, Name: words, @mention "words". */
+function splitAttribution(line: string): Split | null {
+  return splitAfterQuoted(line) ?? splitAtLastDash(line) ?? splitMentionBeforeQuoted(line) ?? splitAtSpeaker(line);
 }
 
 /** One line of a conversation: "Name: words" with any short label as the speaker, or an attributed quote. */
@@ -324,7 +359,7 @@ function stripOuterQuotes(value: string): { text: string; wasQuoted: boolean; se
 
 /** Straight double quotation marks to curly ones, for words that are shown without a pair added around them. */
 function curlQuotes(text: string): string {
-  return text.replace(/"/g, (_mark, offset: number) => (offset === 0 || /[\s(\[]/.test(text[offset - 1]) ? "“" : "”"));
+  return text.replace(/"/g, (_mark, offset: number) => (offset === 0 || /[\s([]/.test(text[offset - 1]) ? "“" : "”"));
 }
 
 const HAS_QUOTED_PART = /["“][^"“”]*[^"“”\s][^"“”]*["”]/;
@@ -346,7 +381,7 @@ function nestQuotes(text: string): string {
   return text
     .replace(/[“„«]/g, "‘")
     .replace(/[”»]/g, "’")
-    .replace(/"/g, (_mark, offset: number) => (offset === 0 || /[\s(\[]/.test(text[offset - 1]) ? "‘" : "’"));
+    .replace(/"/g, (_mark, offset: number) => (offset === 0 || /[\s([]/.test(text[offset - 1]) ? "‘" : "’"));
 }
 
 /**
@@ -357,11 +392,25 @@ function nestQuotes(text: string): string {
  */
 export function parseQuote(raw: string, names: ReadonlyMap<string, string> = new Map(), hasImage = false): Parsed {
   const rendered = renderSlack(raw, names);
-  if (rendered.broadcast) return { ok: false, reason: "announcement" };
-  if (rendered.link || /\bhttps?:\/\/|\bwww\.\S/i.test(rendered.text)) return { ok: false, reason: "has_link" };
-  if (rendered.text.includes("```")) return { ok: false, reason: "code" };
+  const rejected = renderedSkipReason(rendered);
+  if (rejected) return { ok: false, reason: rejected };
 
-  const cleaned = stripFormatting(stripEmojiCodes(rendered.text));
+  const { lines, blockquote } = quoteLines(stripFormatting(stripEmojiCodes(rendered.text)));
+  if (lines.length === 0) return { ok: false, reason: "no_text" };
+
+  const draft = draftQuote(lines, blockquote, hasImage);
+  return draft.ok ? finishQuote(draft.text, draft.who) : draft;
+}
+
+function renderedSkipReason(rendered: { text: string; link: boolean; broadcast: boolean }): SkipReason | null {
+  if (rendered.broadcast) return "announcement";
+  if (rendered.link || /\bhttps?:\/\/|\bwww\.\S/i.test(rendered.text)) return "has_link";
+  if (rendered.text.includes("```")) return "code";
+  return null;
+}
+
+/** The message's non-empty lines, tidied and without any "> " in front, and whether any line had one. */
+function quoteLines(cleaned: string): { lines: string[]; blockquote: boolean } {
   let blockquote = false;
   const lines = cleaned
     .split("\n")
@@ -371,57 +420,68 @@ export function parseQuote(raw: string, names: ReadonlyMap<string, string> = new
       return tidy(quoted ? line.slice(quoted[0].length) : line);
     })
     .filter(Boolean);
-  if (lines.length === 0) return { ok: false, reason: "no_text" };
+  return { lines, blockquote };
+}
 
-  let text: string | null;
-  let who: string | null = null;
-
-  // Under a picture, the text may be nothing but who said it.
+/** Under a picture, the text may be nothing but who said it. */
+function captionWho(lines: string[], hasImage: boolean): string | null {
   const caption = hasImage && lines.length === 1 ? lines[0] : null;
-  const captionDash = caption ? DASH_LINE.exec(caption) : null;
-  const captionWho = caption ? (captionDash ? asWho(captionDash[1], true) : ONLY_MENTIONS.test(caption) ? caption : null) : null;
+  if (!caption) return null;
+  const captionDash = DASH_LINE.exec(caption);
+  if (captionDash) return asWho(captionDash[1], true);
+  return ONLY_MENTIONS.test(caption) ? caption : null;
+}
 
+/** The quote's text and speaker, still with mentions marked, or why the lines are not a quote. */
+function draftQuote(lines: string[], blockquote: boolean, hasImage: boolean): Parsed {
+  const who = captionWho(lines, hasImage);
   const turns = lines.length >= 2 ? lines.map(parseTurn) : [];
-  if (captionWho) {
-    text = null;
-    who = captionWho;
-  } else if (!WORD.test(visible(lines.join("")))) {
-    return { ok: false, reason: "no_text" };
-  } else if (turns.length >= 2 && turns.every(Boolean)) {
-    if (turns.length > MAX_DIALOGUE_LINES) return { ok: false, reason: "too_long" };
-    text = (turns as Split[]).map((turn) => `${turn.who}: ${nestQuotes(stripOuterQuotes(turn.body).text)}`).join("\n");
-  } else {
-    let body = lines.join(" ");
-    let attribution: string | null = null;
-    if (lines.length >= 2) {
-      // Attribution on a line of its own: "- Name", "— Name, at 3am", or just a mention.
-      const last = lines[lines.length - 1];
-      const dashed = DASH_LINE.exec(last);
-      attribution = dashed ? asWho(dashed[1], true) : ONLY_MENTIONS.test(last) ? last : null;
-      if (attribution) body = lines.slice(0, -1).join(" ");
-    }
-    if (!attribution) {
-      const split = splitAttribution(body);
-      if (split) {
-        body = split.body;
-        attribution = split.who;
-      }
-    }
-    const stripped = stripOuterQuotes(body);
-    const inner = tidy(stripped.text);
-    if (!WORD.test(visible(inner))) return { ok: false, reason: "no_text" };
-    const isQuote = stripped.wasQuoted || blockquote || attribution !== null;
-    // Words with no quotation marks anywhere, nobody named and no picture are the channel talking
-    // about a quote ("this a fake quote", "5 mins later"), not a quote.
-    if (!isQuote && !hasImage && !HAS_QUOTED_PART.test(inner)) return { ok: false, reason: "not_a_quote" };
-    // '"a?" "b"' is two quotes: each keeps its own marks, and no pair is added around both.
-    text = isQuote && !stripped.several ? `“${nestQuotes(inner)}”` : curlQuotes(inner);
-    who = attribution;
-  }
+  if (who) return { ok: true, text: null, who };
+  if (!WORD.test(visible(lines.join("")))) return { ok: false, reason: "no_text" };
+  if (turns.length >= 2 && turns.every(Boolean)) return draftDialogue(turns as Split[]);
+  return draftSingleQuote(lines, blockquote, hasImage);
+}
 
-  if (text?.includes(UNRESOLVED) || who?.includes(UNRESOLVED)) return { ok: false, reason: "unresolved_mention" };
-  text = text ? visible(text) : null;
-  who = who ? visible(formatWho(tidy(who.replace(/[\s,;:]+$/, "")))) || null : null;
+function draftDialogue(turns: Split[]): Parsed {
+  if (turns.length > MAX_DIALOGUE_LINES) return { ok: false, reason: "too_long" };
+  const text = turns.map((turn) => `${turn.who}: ${nestQuotes(stripOuterQuotes(turn.body).text)}`).join("\n");
+  return { ok: true, text, who: null };
+}
+
+/** Attribution on a line of its own: "- Name", "— Name, at 3am", or just a mention. */
+function attributionLine(line: string): string | null {
+  const dashed = DASH_LINE.exec(line);
+  if (dashed) return asWho(dashed[1], true);
+  return ONLY_MENTIONS.test(line) ? line : null;
+}
+
+function separateAttribution(lines: string[]): { body: string; attribution: string | null } {
+  const ownLine = lines.length >= 2 ? attributionLine(lines[lines.length - 1]) : null;
+  if (ownLine) return { body: lines.slice(0, -1).join(" "), attribution: ownLine };
+  const body = lines.join(" ");
+  const split = splitAttribution(body);
+  return split ? { body: split.body, attribution: split.who } : { body, attribution: ownLine };
+}
+
+function draftSingleQuote(lines: string[], blockquote: boolean, hasImage: boolean): Parsed {
+  const { body, attribution } = separateAttribution(lines);
+  const stripped = stripOuterQuotes(body);
+  const inner = tidy(stripped.text);
+  if (!WORD.test(visible(inner))) return { ok: false, reason: "no_text" };
+  const isQuote = stripped.wasQuoted || blockquote || attribution !== null;
+  // Words with no quotation marks anywhere, nobody named and no picture are the channel talking
+  // about a quote ("this a fake quote", "5 mins later"), not a quote.
+  if (!isQuote && !hasImage && !HAS_QUOTED_PART.test(inner)) return { ok: false, reason: "not_a_quote" };
+  // '"a?" "b"' is two quotes: each keeps its own marks, and no pair is added around both.
+  const text = isQuote && !stripped.several ? `“${nestQuotes(inner)}”` : curlQuotes(inner);
+  return { ok: true, text, who: attribution };
+}
+
+/** A drafted quote as it is shown: mention marks removed, the speaker tidied, and too long ones refused. */
+function finishQuote(draftText: string | null, draftWho: string | null): Parsed {
+  if (draftText?.includes(UNRESOLVED) || draftWho?.includes(UNRESOLVED)) return { ok: false, reason: "unresolved_mention" };
+  const text = draftText ? visible(draftText) : null;
+  const who = draftWho ? visible(formatWho(tidy(draftWho.replace(/[\s,;:]+$/, "")))) || null : null;
   if (text && text.length > MAX_QUOTE_CHARS) return { ok: false, reason: "too_long" };
   return { ok: true, text, who };
 }
@@ -507,25 +567,13 @@ export function buildPool(
     skipped[reason] = (skipped[reason] ?? 0) + 1;
   };
   for (const message of messages) {
-    const reason = skipReason(message);
-    if (reason) {
-      skip(reason);
-      continue;
-    }
-    if (!inWindow({ id: message.ts as string }, oldestMs)) {
-      skip("too_old");
-      continue;
-    }
-    const image = imageFile(message);
-    const raw = message.text?.trim() ?? "";
-    // A picture with no words is a quote too: a photo or a screenshot of what was said.
-    const parsed: Parsed = raw ? parseQuote(raw, names, Boolean(image)) : { ok: true, text: null, who: null };
-    if (!parsed.ok) {
-      skip(parsed.reason);
+    const read = readMessage(message, names, oldestMs);
+    if (!read.ok) {
+      skip(read.reason);
       continue;
     }
     // The same words posted twice are shown once.
-    const key = parsed.text?.toLowerCase();
+    const key = read.text?.toLowerCase();
     if (key && seen.has(key)) {
       skip("duplicate");
       continue;
@@ -535,18 +583,44 @@ export function buildPool(
       skip("over_pool_limit");
       continue;
     }
-    const millis = Number(message.ts) * 1000;
-    quotes.push({
-      id: message.ts as string,
-      text: parsed.text,
-      who: parsed.who,
-      poster: (message.user && names.get(message.user)) || null,
-      postedAt: Number.isFinite(millis) ? new Date(millis).toISOString() : null,
-      fileId: image?.id ?? null,
-      imageKind: image ? imageKind(image) : null,
-    });
+    quotes.push(storedQuote(message, read, names));
   }
   return { quotes, stats: { scanned: messages.length, kept: quotes.length, skipped } };
+}
+
+type ReadMessage =
+  | { ok: true; text: string | null; who: string | null; image: SlackFile | null }
+  | { ok: false; reason: string };
+
+/** One message as a quote and its picture, or why it is left out. */
+function readMessage(message: SlackMessage, names: ReadonlyMap<string, string>, oldestMs: number): ReadMessage {
+  const reason = skipReason(message);
+  if (reason) return { ok: false, reason };
+  if (!inWindow({ id: message.ts as string }, oldestMs)) return { ok: false, reason: "too_old" };
+  const image = imageFile(message);
+  const raw = message.text?.trim() ?? "";
+  // A picture with no words is a quote too: a photo or a screenshot of what was said.
+  const parsed: Parsed = raw ? parseQuote(raw, names, Boolean(image)) : { ok: true, text: null, who: null };
+  if (!parsed.ok) return { ok: false, reason: parsed.reason };
+  return { ok: true, text: parsed.text, who: parsed.who, image };
+}
+
+function storedQuote(
+  message: SlackMessage,
+  read: { text: string | null; who: string | null; image: SlackFile | null },
+  names: ReadonlyMap<string, string>,
+): StoredQuote {
+  const { image } = read;
+  const millis = Number(message.ts) * 1000;
+  return {
+    id: message.ts as string,
+    text: read.text,
+    who: read.who,
+    poster: (message.user && names.get(message.user)) || null,
+    postedAt: Number.isFinite(millis) ? new Date(millis).toISOString() : null,
+    fileId: image?.id ?? null,
+    imageKind: image ? imageKind(image) : null,
+  };
 }
 
 // --- Slack -----------------------------------------------------------------------------------
@@ -572,32 +646,44 @@ async function slackGet<T>(method: string, params: Record<string, string>): Prom
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
   for (let attempt = 0; ; attempt += 1) {
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-        signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-      });
-    } catch (error) {
-      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-      throw new SlackError(timedOut ? "timeout" : "network_error");
-    }
+    const response = await fetchWithToken(url, token);
     if (response.status === 429) {
-      const seconds = Number(response.headers.get("retry-after"));
-      const waitMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000;
+      const waitMs = retryAfterMs(response);
       if (attempt >= RATE_LIMIT_RETRIES || waitMs > MAX_RATE_LIMIT_WAIT_MS) throw new SlackError("rate_limited", waitMs);
       await sleep(waitMs);
       continue;
     }
     if (!response.ok) throw new SlackError(`http_${response.status}`);
-    const payload = (await response.json()) as T & { ok: boolean; error?: string; needed?: string };
-    if (!payload.ok) {
-      const code = payload.error ?? "unknown";
-      throw new SlackError(code === "ratelimited" ? "rate_limited" : payload.needed ? `${code} (needs ${payload.needed})` : code);
-    }
+    const payload = (await response.json()) as T & SlackPayload;
+    if (!payload.ok) throw new SlackError(payloadErrorCode(payload));
     return payload;
   }
+}
+
+type SlackPayload = { ok: boolean; error?: string; needed?: string };
+
+async function fetchWithToken(url: URL, token: string): Promise<Response> {
+  try {
+    return await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    throw new SlackError(timedOut ? "timeout" : "network_error");
+  }
+}
+
+function retryAfterMs(response: Response): number {
+  const seconds = Number(response.headers.get("retry-after"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 5_000;
+}
+
+function payloadErrorCode(payload: SlackPayload): string {
+  const code = payload.error ?? "unknown";
+  if (code === "ratelimited") return "rate_limited";
+  return payload.needed ? `${code} (needs ${payload.needed})` : code;
 }
 
 /** Errors that mean "Slack will keep saying no until a person changes something". */
@@ -621,6 +707,16 @@ function slackHelp(code: string, channel: string): string {
   return "Temporary Slack problem; it is retried automatically.";
 }
 
+type HistoryPage = { messages?: SlackMessage[]; has_more?: boolean; response_metadata?: { next_cursor?: string } };
+
+function historyPage(channel: string, oldest: string, cursor: string): Promise<HistoryPage> {
+  return slackGet("conversations.history", { channel, oldest, limit: String(PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+}
+
+function slackErrorCode(error: unknown): string {
+  return error instanceof SlackError ? error.code : "unknown";
+}
+
 /**
  * The channel's messages posted since `oldestMs`, newest first: Slack is not asked for anything
  * older. Stops early on a failure once it has something.
@@ -632,22 +728,32 @@ async function readHistory(channel: string, oldestMs: number): Promise<{ message
   let candidates = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     if (page > 0) await sleep(PAGE_GAP_MS);
-    let payload: { messages?: SlackMessage[]; has_more?: boolean; response_metadata?: { next_cursor?: string } };
+    let payload: HistoryPage;
     try {
-      payload = await slackGet("conversations.history", { channel, oldest, limit: String(PAGE_SIZE), ...(cursor ? { cursor } : {}) });
+      payload = await historyPage(channel, oldest, cursor);
     } catch (error) {
-      const code = error instanceof SlackError ? error.code : "unknown";
-      if (messages.length === 0 || isAccessError(code)) throw error;
+      if (messages.length === 0 || isAccessError(slackErrorCode(error))) throw error;
       return { messages, partial: true };
     }
-    for (const message of payload.messages ?? []) {
-      messages.push(message);
-      if (!skipReason(message)) candidates += 1;
-    }
+    candidates += collectPage(payload, messages);
     cursor = payload.response_metadata?.next_cursor ?? "";
-    if (!payload.has_more || !cursor || candidates >= ENOUGH_CANDIDATES) break;
+    if (isLastPageNeeded(payload, cursor, candidates)) break;
   }
   return { messages, partial: false };
+}
+
+function isLastPageNeeded(payload: HistoryPage, cursor: string, candidates: number): boolean {
+  return !payload.has_more || !cursor || candidates >= ENOUGH_CANDIDATES;
+}
+
+/** Adds the page's messages to `messages` and counts the ones that could be quotes. */
+function collectPage(payload: HistoryPage, messages: SlackMessage[]): number {
+  let candidates = 0;
+  for (const message of payload.messages ?? []) {
+    messages.push(message);
+    if (!skipReason(message)) candidates += 1;
+  }
+  return candidates;
 }
 
 // --- State and refresh -----------------------------------------------------------------------

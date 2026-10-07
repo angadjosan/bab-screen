@@ -46,6 +46,73 @@ function Player({ game, side, landed }: { game: Game; side: "heads" | "tails"; l
   );
 }
 
+/** The payout's QR once the coin has landed: the wallet's own QR in the demo, else the transaction's when it is known. */
+function receiptQr(game: Game | null, landed: boolean, view: Ok | null): JamQr | null {
+  if (!game || !landed) return null;
+  if (game.id.startsWith("demo")) return view?.qr ?? null;
+  return payoutQr(view, game.id);
+}
+
+function payoutQr(view: Ok | null, gameId: string): JamQr | null {
+  return view?.game?.id === gameId ? view.game.payout?.qr ?? null : null;
+}
+
+/** The standing tile that invites a stake: the wallet's QR, and the stake waiting to be matched if there is one. */
+function stakeTile(view: Ok) {
+  return (
+    <section className={styles.tile} aria-label="Coin flip">
+      <div className={styles.qr}><Qr qr={view.qr} box={QR_BOX_PX} label="QR code of the coin flip wallet address" /></div>
+      <div className={styles.body}>
+        <p className={styles.title}>Want to gamble?</p>
+        <p className={styles.rules}>Gamble on a coin flip</p>
+        {!view.waiting && <p className={styles.fine}>Send USDC on {view.network}, {money(view.minUsd)} or more</p>}
+        {view.waiting ? (
+          <div className={styles.status}>
+            <p className={styles.stake}>{money(view.waiting.usd)}</p>
+            <p className={styles.rules}>Match to play</p>
+            <p className={styles.fine}>{short(view.waiting.from)} · {clock(view.waiting.remainingMs)}</p>
+          </div>
+        ) : (
+          <p className={`${styles.status} ${styles.fine}`}>{view.problem ? "Not watching for deposits right now" : "Waiting for the first stake"}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+type OverlayProps = {
+  game: Game;
+  phase: Phase;
+  landed: boolean;
+  paid: boolean;
+  pot: string;
+  receipt: JamQr | null;
+  toss: () => void;
+  land: () => void;
+};
+
+/** The full-screen flip for one game, from the toss to the payout's receipt. */
+function gameOverlay({ game, phase, landed, paid, pot, receipt, toss, land }: OverlayProps) {
+  return (
+    <div key={game.id} className={`${styles.overlay} ${landed ? styles.landed : ""} ${phase === "leaving" ? styles.leaving : ""}`} role="status">
+      <p className={styles.kicker}>Coin flip · {money(game.stakeUsd)} each</p>
+      <div className={styles.table}>
+        <Player game={game} side="heads" landed={landed} />
+        <div className={styles.toss}><CoinToss winner={game.winner} onToss={toss} onLand={land} /></div>
+        <Player game={game} side="tails" landed={landed} />
+      </div>
+      <p className={styles.result}>{landed ? `${game.winner === "heads" ? "Heads" : "Tails"} wins ${pot}` : ""}</p>
+      <p className={styles.payout}>{!landed ? "" : paid ? `${pot} sent to ${short(game[game.winner])}` : `Sending ${pot} to ${short(game[game.winner])}`}</p>
+      {receipt && (
+        <div className={styles.receipt}>
+          <p>Scan for the transaction</p>
+          <div className={styles.receiptQr}><Qr qr={receipt} box={RECEIPT_BOX_PX} label="QR code of the payout transaction on the block explorer" /></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CoinFlip() {
   const [view, setView] = useState<Ok | null>(null);
   const [game, setGame] = useState<Game | null>(null);
@@ -84,7 +151,7 @@ export function CoinFlip() {
 
   const gameId = game?.id;
   const landed = phase !== "flip";
-  const receipt = !game || !landed ? null : game.id.startsWith("demo") ? view?.qr ?? null : view?.game?.id === game.id ? view.game.payout?.qr ?? null : null;
+  const receipt = receiptQr(game, landed, view);
   const paid = !!receipt;
 
   useEffect(() => {
@@ -116,43 +183,8 @@ export function CoinFlip() {
 
   return (
     <>
-      {view && (
-        <section className={styles.tile} aria-label="Coin flip">
-          <div className={styles.qr}><Qr qr={view.qr} box={QR_BOX_PX} label="QR code of the coin flip wallet address" /></div>
-          <div className={styles.body}>
-            <p className={styles.title}>Want to gamble?</p>
-            <p className={styles.rules}>Gamble on a coin flip</p>
-            {!view.waiting && <p className={styles.fine}>Send USDC on {view.network}, {money(view.minUsd)} or more</p>}
-            {view.waiting ? (
-              <div className={styles.status}>
-                <p className={styles.stake}>{money(view.waiting.usd)}</p>
-                <p className={styles.rules}>Match to play</p>
-                <p className={styles.fine}>{short(view.waiting.from)} · {clock(view.waiting.remainingMs)}</p>
-              </div>
-            ) : (
-              <p className={`${styles.status} ${styles.fine}`}>{view.problem ? "Not watching for deposits right now" : "Waiting for the first stake"}</p>
-            )}
-          </div>
-        </section>
-      )}
-      {game && (
-        <div key={game.id} className={`${styles.overlay} ${landed ? styles.landed : ""} ${phase === "leaving" ? styles.leaving : ""}`} role="status">
-          <p className={styles.kicker}>Coin flip · {money(game.stakeUsd)} each</p>
-          <div className={styles.table}>
-            <Player game={game} side="heads" landed={landed} />
-            <div className={styles.toss}><CoinToss winner={game.winner} onToss={toss} onLand={land} /></div>
-            <Player game={game} side="tails" landed={landed} />
-          </div>
-          <p className={styles.result}>{landed ? `${game.winner === "heads" ? "Heads" : "Tails"} wins ${pot}` : ""}</p>
-          <p className={styles.payout}>{!landed ? "" : paid ? `${pot} sent to ${short(game[game.winner])}` : `Sending ${pot} to ${short(game[game.winner])}`}</p>
-          {receipt && (
-            <div className={styles.receipt}>
-              <p>Scan for the transaction</p>
-              <div className={styles.receiptQr}><Qr qr={receipt} box={RECEIPT_BOX_PX} label="QR code of the payout transaction on the block explorer" /></div>
-            </div>
-          )}
-        </div>
-      )}
+      {view && stakeTile(view)}
+      {game && gameOverlay({ game, phase, landed, paid, pot, receipt, toss, land })}
     </>
   );
 }

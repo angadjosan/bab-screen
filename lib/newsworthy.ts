@@ -232,18 +232,32 @@ export function cleanSummary(raw: unknown, grounds: string, names: string[] = []
     .replace(/!?\[([^\]]*)\]\(([^)]*)\)/g, "$1 $2");
   const kept: string[] = [];
   for (const part of text.split(SENTENCE_END)) {
-    const sentence = part.trim();
-    if (!sentence) continue;
-    if (LINK.test(hide(sentence)) || HANDLE.test(sentence) || OTHER_SCRIPT.test(sentence)) continue;
-    if (rejectReason({ title: sentence, url: "https://example.invalid/", kind: "news" })) continue;
-    const invented = (sentence.match(NUMBER) ?? []).some((number) => !new RegExp(`(?<![\\d.])${escapeRegExp(figure(number))}(?!\\d|\\.\\d)`).test(facts));
-    if (invented) continue;
-    const plain = sentence.replace(NOT_PLAIN, " ").replace(/\s+/g, " ").replace(/\s+([.,;:!?])/g, "$1").trim();
-    // A sentence is a statement: it has several words and it ends.
-    if (plain.split(" ").length < 4) continue;
-    const whole = /[.!?]["”’)]?$/.test(plain) ? plain : `${plain}.`;
-    if (!kept.includes(whole)) kept.push(whole);
+    const whole = screenSentence(part.trim(), hide, facts);
+    if (whole !== null && !kept.includes(whole)) kept.push(whole);
   }
+  const summary = fitSummary(kept);
+  return summary.length >= SUMMARY_MIN_CHARS ? summary : null;
+}
+
+/** One sentence of the note as it may be shown, or null if it has to go. */
+function screenSentence(sentence: string, hide: (text: string) => string, facts: string): string | null {
+  if (!sentence) return null;
+  if (LINK.test(hide(sentence)) || HANDLE.test(sentence) || OTHER_SCRIPT.test(sentence)) return null;
+  if (rejectReason({ title: sentence, url: "https://example.invalid/", kind: "news" })) return null;
+  if (hasInventedNumber(sentence, facts)) return null;
+  const plain = sentence.replace(NOT_PLAIN, " ").replace(/\s+/g, " ").replace(/\s+([.,;:!?])/g, "$1").trim();
+  // A sentence is a statement: it has several words and it ends.
+  if (plain.split(" ").length < 4) return null;
+  return /[.!?]["”’)]?$/.test(plain) ? plain : `${plain}.`;
+}
+
+/** Whether the sentence has a number that is not in the cited candidates. */
+function hasInventedNumber(sentence: string, facts: string): boolean {
+  return (sentence.match(NUMBER) ?? []).some((number) => !new RegExp(`(?<![\\d.])${escapeRegExp(figure(number))}(?!\\d|\\.\\d)`).test(facts));
+}
+
+/** As many whole sentences as fit in SUMMARY_MAX_CHARS. */
+function fitSummary(kept: string[]): string {
   let summary = "";
   for (const sentence of kept) {
     const next = summary ? `${summary} ${sentence}` : sentence;
@@ -252,7 +266,7 @@ export function cleanSummary(raw: unknown, grounds: string, names: string[] = []
   }
   // A first sentence too long to show whole is cut at a word.
   if (!summary && kept.length) summary = clip(kept[0], SUMMARY_MAX_CHARS);
-  return summary.length >= SUMMARY_MIN_CHARS ? summary : null;
+  return summary;
 }
 
 /** How many different outlets carried the cited candidates. */
@@ -269,37 +283,71 @@ export function parseNewsworthy(output: unknown, candidates: Candidate[], univer
   const tokens: NewsworthyToken[] = [];
   const rejected: Rejection[] = [];
   const seen = new Set<string>();
+  const context: EntryContext = { candidates, universe, names, seen };
   for (const entry of entries.slice(0, 3 * MAX_TOKENS)) {
     if (tokens.length === MAX_TOKENS) break;
-    const raw = typeof entry === "object" && entry !== null ? (entry as { symbol?: unknown; sources?: unknown; summary?: unknown }) : {};
-    const symbol = typeof raw.symbol === "string" ? raw.symbol.trim().replace(/^\$/, "").toUpperCase() : "";
-    const refuse = (reason: string) => rejected.push({ symbol: symbol.replace(/[^A-Z0-9]/g, "").slice(0, 12) || "?", reason });
-    const token = universe.get(symbol);
-    if (!token) { refuse("unknown_ticker"); continue; }
-    if (SET_SYMBOLS.has(symbol)) { refuse("set_token"); continue; }
-    if (seen.has(symbol)) { refuse("duplicate"); continue; }
-    const numbers = Array.isArray(raw.sources) ? raw.sources.slice(0, 50) : [];
-    const cited = [...new Set(numbers.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= candidates.length))]
-      .slice(0, MAX_SOURCES_PER_TOKEN)
-      .map((n) => candidates[n - 1]);
-    if (!cited.length) { refuse("no_valid_sources"); continue; }
-    const about = cited.filter(({ item }) => mentionsToken(`${item.title} ${item.summary ?? ""}`, token));
-    if (outletCount(about) < MIN_OUTLETS) { refuse(about.length ? "too_few_outlets" : "sources_do_not_mention_token"); continue; }
-    const summary = cleanSummary(raw.summary, about.map(({ item }) => `${item.title} ${item.summary ?? ""}`).join("\n"), names);
-    if (!summary) { refuse("unusable_summary"); continue; }
+    const raw = typeof entry === "object" && entry !== null ? (entry as RawEntry) : {};
+    const symbol = entrySymbol(raw);
+    const judged = judgeEntry(raw, symbol, context);
+    if (!judged.ok) {
+      rejected.push({ symbol: rejectedSymbol(symbol), reason: judged.reason });
+      continue;
+    }
     seen.add(symbol);
-    tokens.push({
-      symbol: token.symbol,
-      name: token.name,
-      venue: token.venue,
-      market: token.market,
-      lot: token.lot,
-      summary,
-      outlets: [...new Set(about.flatMap((candidate) => candidate.sources))].slice(0, MAX_OUTLETS_SHOWN),
-      newestAt: new Date(Math.max(...about.map(({ item }) => Date.parse(item.publishedAt)))).toISOString(),
-    });
+    tokens.push(judged.token);
   }
   return { tokens, rejected };
+}
+
+type RawEntry = { symbol?: unknown; sources?: unknown; summary?: unknown };
+type EntryContext = { candidates: Candidate[]; universe: Map<string, UniverseToken>; names: string[]; seen: Set<string> };
+type Judged = { ok: true; token: NewsworthyToken } | { ok: false; reason: string };
+
+const refused = (reason: string): Judged => ({ ok: false, reason });
+
+function entrySymbol(raw: RawEntry): string {
+  return typeof raw.symbol === "string" ? raw.symbol.trim().replace(/^\$/, "").toUpperCase() : "";
+}
+
+/** The symbol as it is noted in `rejected`: only letters and digits, never empty. */
+function rejectedSymbol(symbol: string): string {
+  return symbol.replace(/[^A-Z0-9]/g, "").slice(0, 12) || "?";
+}
+
+/** One entry of the model's answer as a token to show, or why it was dropped. */
+function judgeEntry(raw: RawEntry, symbol: string, { candidates, universe, names, seen }: EntryContext): Judged {
+  const token = universe.get(symbol);
+  if (!token) return refused("unknown_ticker");
+  if (SET_SYMBOLS.has(symbol)) return refused("set_token");
+  if (seen.has(symbol)) return refused("duplicate");
+  const cited = citedCandidates(raw.sources, candidates);
+  if (!cited.length) return refused("no_valid_sources");
+  const about = cited.filter(({ item }) => mentionsToken(`${item.title} ${item.summary ?? ""}`, token));
+  if (outletCount(about) < MIN_OUTLETS) return refused(about.length ? "too_few_outlets" : "sources_do_not_mention_token");
+  const summary = cleanSummary(raw.summary, about.map(({ item }) => `${item.title} ${item.summary ?? ""}`).join("\n"), names);
+  if (!summary) return refused("unusable_summary");
+  return { ok: true, token: newsworthyToken(token, summary, about) };
+}
+
+/** The candidates an entry cites by number, each once, ignoring numbers that point at nothing. */
+function citedCandidates(sources: unknown, candidates: Candidate[]): Candidate[] {
+  const numbers = Array.isArray(sources) ? sources.slice(0, 50) : [];
+  return [...new Set(numbers.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= candidates.length))]
+    .slice(0, MAX_SOURCES_PER_TOKEN)
+    .map((n) => candidates[n - 1]);
+}
+
+function newsworthyToken(token: UniverseToken, summary: string, about: Candidate[]): NewsworthyToken {
+  return {
+    symbol: token.symbol,
+    name: token.name,
+    venue: token.venue,
+    market: token.market,
+    lot: token.lot,
+    summary,
+    outlets: [...new Set(about.flatMap((candidate) => candidate.sources))].slice(0, MAX_OUTLETS_SHOWN),
+    newestAt: new Date(Math.max(...about.map(({ item }) => Date.parse(item.publishedAt)))).toISOString(),
+  };
 }
 
 // --- State -----------------------------------------------------------------------------------------
@@ -346,34 +394,23 @@ async function run(results: SourceResult[], now: number, force: boolean): Promis
   const every = refreshMs();
   if (!agentPlan().order.length || every === 0) {
     // Nobody to write the notes: no list, and nothing left over from when there was.
-    if (state.tokens.length || state.signature) { runtime.state = emptyState(); await save(); }
+    await dropList(state);
     return;
   }
-  // A little slack, so a run that follows the feed's refresh by a few seconds still counts as due.
-  if (!force && state.checkedAt && now - Date.parse(state.checkedAt) < every - 60_000) return;
+  if (!force && checkedRecently(state, now, every)) return;
 
   const stamp = new Date(now).toISOString();
-  const fail = async (code: string, attempts: AgentAttempt[] = []) => {
-    state.checkedAt = stamp;
-    state.agent = { at: stamp, agent: null, model: null, ms: null, ok: false, error: code, attempts };
-    console.warn(`[newsworthy] no new list (${code}); ${state.tokens.length ? "keeping the last one for now" : "nothing to show"}`);
-    await save();
-  };
 
   const universe = await getUniverse(now);
-  if (!universe) { await fail("no_token_list"); return; }
+  if (!universe) { await recordFailure(state, stamp, "no_token_list"); return; }
   const candidates = newsCandidates(results, now);
   if (!candidates.length) {
-    state.tokens = [];
-    state.rejected = [];
-    state.signature = "";
-    state.updatedAt = state.checkedAt = stamp;
-    await save();
+    await clearList(state, stamp);
     return;
   }
 
-  const signature = createHash("sha1").update([...candidates.map(({ item }) => item.id), "", ...universe.keys()].join("\n")).digest("hex");
-  if (!force && signature === state.signature && state.agent?.ok) {
+  const signature = newsSignature(candidates, universe);
+  if (!force && isSameNews(state, signature)) {
     // The same news as last time: the list stands, and no model is asked.
     state.updatedAt = state.checkedAt = stamp;
     await save();
@@ -382,19 +419,69 @@ async function run(results: SourceResult[], now: number, force: boolean): Promis
 
   const symbols = [...universe.keys()].filter((symbol) => !SET_SYMBOLS.has(symbol));
   try {
-    const job = { system: SYSTEM_PROMPT, prompt: buildPrompt(candidates, universe, now), schema: schema(symbols) };
-    const outcome = await runAgents(job, (output) => parseNewsworthy(output, candidates, universe));
-    const done = new Date().toISOString();
-    state.tokens = outcome.value.tokens;
-    state.rejected = outcome.value.rejected;
-    state.signature = signature;
-    state.updatedAt = state.checkedAt = done;
-    state.agent = { at: done, agent: outcome.agent, model: outcome.model, ms: outcome.ms, ok: true, error: null, attempts: outcome.attempts };
-    if (outcome.value.rejected.length) console.warn("[newsworthy] entries dropped:", outcome.value.rejected.map((entry) => `${entry.symbol} (${entry.reason})`).join(", "));
-    await save();
+    await makeList(state, { candidates, universe, symbols, signature }, now);
   } catch (error) {
-    await fail(error instanceof AgentError ? error.code : "internal_error", error instanceof AgentError ? error.attempts : []);
+    const failure = agentFailure(error);
+    await recordFailure(state, stamp, failure.code, failure.attempts);
   }
+}
+
+/** A little slack, so a run that follows the feed's refresh by a few seconds still counts as due. */
+function checkedRecently(state: Stored, now: number, every: number): boolean {
+  return Boolean(state.checkedAt && now - Date.parse(state.checkedAt) < every - 60_000);
+}
+
+/** The same candidates and tokens as the last list a model made. */
+function isSameNews(state: Stored, signature: string): boolean {
+  return Boolean(signature === state.signature && state.agent?.ok);
+}
+
+function agentFailure(error: unknown): { code: string; attempts: AgentAttempt[] } {
+  return {
+    code: error instanceof AgentError ? error.code : "internal_error",
+    attempts: error instanceof AgentError ? error.attempts : [],
+  };
+}
+
+async function dropList(state: Stored): Promise<void> {
+  if (state.tokens.length || state.signature) { runtime.state = emptyState(); await save(); }
+}
+
+/** No news at all: an empty list, made now. */
+async function clearList(state: Stored, stamp: string): Promise<void> {
+  state.tokens = [];
+  state.rejected = [];
+  state.signature = "";
+  state.updatedAt = state.checkedAt = stamp;
+  await save();
+}
+
+async function recordFailure(state: Stored, stamp: string, code: string, attempts: AgentAttempt[] = []): Promise<void> {
+  state.checkedAt = stamp;
+  state.agent = { at: stamp, agent: null, model: null, ms: null, ok: false, error: code, attempts };
+  console.warn(`[newsworthy] no new list (${code}); ${state.tokens.length ? "keeping the last one for now" : "nothing to show"}`);
+  await save();
+}
+
+/** Changes whenever the candidates or the token list do. */
+function newsSignature(candidates: Candidate[], universe: Map<string, UniverseToken>): string {
+  return createHash("sha1").update([...candidates.map(({ item }) => item.id), "", ...universe.keys()].join("\n")).digest("hex");
+}
+
+type ListInput = { candidates: Candidate[]; universe: Map<string, UniverseToken>; symbols: string[]; signature: string };
+
+/** Asks the models for a new list and keeps it. Throws when none of them produced one. */
+async function makeList(state: Stored, { candidates, universe, symbols, signature }: ListInput, now: number): Promise<void> {
+  const job = { system: SYSTEM_PROMPT, prompt: buildPrompt(candidates, universe, now), schema: schema(symbols) };
+  const outcome = await runAgents(job, (output) => parseNewsworthy(output, candidates, universe));
+  const done = new Date().toISOString();
+  state.tokens = outcome.value.tokens;
+  state.rejected = outcome.value.rejected;
+  state.signature = signature;
+  state.updatedAt = state.checkedAt = done;
+  state.agent = { at: done, agent: outcome.agent, model: outcome.model, ms: outcome.ms, ok: true, error: null, attempts: outcome.attempts };
+  if (outcome.value.rejected.length) console.warn("[newsworthy] entries dropped:", outcome.value.rejected.map((entry) => `${entry.symbol} (${entry.reason})`).join(", "));
+  await save();
 }
 
 /**
@@ -422,11 +509,27 @@ export async function getNewsworthy(now = Date.now()): Promise<NewsworthyRespons
     // Start empty.
   }
   const state = runtime.state;
-  const made = state.agent?.ok ? state.agent : null;
-  const base = { updatedAt: state.updatedAt, agent: made?.agent ?? null, agentModel: made?.model ?? null };
+  const base = responseBase(state);
   if (!agentPlan().order.length || refreshMs() === 0) return { status: "off", tokens: [], ...base, message: "no agent is configured" };
   const fresh = state.updatedAt !== null && now - Date.parse(state.updatedAt) < TTL_MINUTES * 60_000;
   const failing = state.agent && !state.agent.ok ? state.agent.error : null;
-  if (!fresh) return { status: failing ? "error" : "empty", tokens: [], ...base, ...(failing ? { message: failing } : {}) };
+  if (!fresh) return expiredResponse(base, failing);
+  return currentResponse(state, base, failing);
+}
+
+type ResponseBase = Pick<NewsworthyResponse, "updatedAt" | "agent" | "agentModel">;
+
+/** When the list was made and which model made it (when one did). */
+function responseBase(state: Stored): ResponseBase {
+  const made = state.agent?.ok ? state.agent : null;
+  return { updatedAt: state.updatedAt, agent: made?.agent ?? null, agentModel: made?.model ?? null };
+}
+
+/** The list is too old to show. */
+function expiredResponse(base: ResponseBase, failing: string | null): NewsworthyResponse {
+  return { status: failing ? "error" : "empty", tokens: [], ...base, ...(failing ? { message: failing } : {}) };
+}
+
+function currentResponse(state: Stored, base: ResponseBase, failing: string | null): NewsworthyResponse {
   return { status: state.tokens.length ? "ok" : "empty", tokens: state.tokens, ...base, ...(failing ? { message: `last run failed (${failing}); showing the previous list` } : {}) };
 }

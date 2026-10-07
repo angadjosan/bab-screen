@@ -210,11 +210,23 @@ function renderText(text: string, names: Map<string, string>): string | null {
 
   const tidy = output
     .split("\n")
-    .map((line) => line.replace(/[ \t ]+/g, " ").trim())
+    .map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return tidy || null;
+}
+
+/** Mentioned users in order of first appearance, deduped; keep any <@U…|label> as a fallback name. */
+function mentionLabels(text: string): Map<string, string | null> {
+  const labels = new Map<string, string | null>();
+  for (const match of text.matchAll(TOKEN)) {
+    const id = mentionedUserId(match[1]);
+    if (!id) continue;
+    const label = splitLabel(match[1].slice(1)).label?.replace(/^@/, "") || null;
+    if (!labels.has(id) || (!labels.get(id) && label)) labels.set(id, label);
+  }
+  return labels;
 }
 
 /** Names for one spot message. Never throws. */
@@ -222,14 +234,7 @@ export async function describeSpot(message: SpotMessage): Promise<SpotDescriptio
   try {
     const text = typeof message?.text === "string" ? message.text : "";
 
-    // Mentioned users in order of first appearance, deduped; keep any <@U…|label> as a fallback name.
-    const labels = new Map<string, string | null>();
-    for (const match of text.matchAll(TOKEN)) {
-      const id = mentionedUserId(match[1]);
-      if (!id) continue;
-      const label = splitLabel(match[1].slice(1)).label?.replace(/^@/, "") || null;
-      if (!labels.has(id) || (!labels.get(id) && label)) labels.set(id, label);
-    }
+    const labels = mentionLabels(text);
     const mentionedIds = [...labels.keys()];
 
     const [spotterName, ...mentionedNames] = await Promise.all([
