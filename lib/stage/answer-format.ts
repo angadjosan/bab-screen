@@ -40,10 +40,27 @@ function readBlock(text: string, kind: Kind, start: number): { block: StageBlock
 }
 
 /**
+ * GLM-5.3 writes its own tool calls with <arg_key> and <arg_value> tags, and now and then one leaks into an answer:
+ * "<diagram<arg_key>direction":…" where "<diagram>{"direction":…" was meant. Those are repaired, and any other stray
+ * tool-call tags dropped, before the answer is read.
+ */
+function repairLeaks(text: string): string {
+  return text
+    .replace(new RegExp(`<(${KINDS.join("|")})<arg_key>`, "g"), '<$1>{"')
+    .replace(/<\/?(arg_key|arg_value|tool_call)>/g, "");
+}
+
+/** Text that looks like JSON or markup is never said out loud, whatever block it ended up in. */
+export function isSpeakable(text: string): boolean {
+  return !/^[\s{[<]/.test(text) && !/"\s*:\s*["{[\d]/.test(text);
+}
+
+/**
  * The blocks in everything streamed so far. Pure: called again with the longer text each time a chunk arrives.
  * `finished` marks the stream as over, which closes a block whose closing tag never came.
  */
-export function parseAnswer(text: string, finished = false): StageBlock[] {
+export function parseAnswer(raw: string, finished = false): StageBlock[] {
+  const text = repairLeaks(raw);
   const blocks: StageBlock[] = [];
   let at = 0;
   OPEN.lastIndex = 0;
@@ -62,7 +79,7 @@ export function parseAnswer(text: string, finished = false): StageBlock[] {
 
 /** The spoken text of blocks that have finished, in order, for the voice to read out. */
 export function finishedSpeech(blocks: StageBlock[]): string[] {
-  return blocks.filter((block) => block.kind === "say" && block.done).map((block) => plainSpeech(block.body));
+  return blocks.filter((block) => block.kind === "say" && block.done).map((block) => plainSpeech(block.body)).filter(isSpeakable);
 }
 
 /** Markdown a model may slip in, taken out before the text is spoken or shown. */

@@ -113,7 +113,10 @@ export function toolActivity(name: string, rawArgs: string): string {
 /** Runs one tool call and returns its result as text for the model. Never throws. */
 export async function runTool(name: string, rawArgs: string): Promise<string> {
   const entry = TOOLS[name];
-  if (!entry) return JSON.stringify({ error: `no tool called ${name}` });
+  if (!entry) {
+    console.warn(`[stage] the model asked for a tool that does not exist: ${name}`);
+    return JSON.stringify({ error: `no tool called ${name}; the tools are ${Object.keys(TOOLS).join(", ")}` });
+  }
   try {
     return JSON.stringify(await entry.run(parseArgs(rawArgs))).slice(0, RESULT_MAX_CHARS);
   } catch (error) {

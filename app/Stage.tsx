@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { CalendarEvent, EventsResponse } from "@/lib/events";
-import { plainSpeech } from "@/lib/stage/answer-format";
+import { isSpeakable, plainSpeech } from "@/lib/stage/answer-format";
 import type { StageBlock, StageState } from "@/lib/stage/state";
 import { Visual } from "./StagePieces";
 import styles from "./Stage.module.css";
@@ -118,7 +118,7 @@ function Closing({ closesAt }: { closesAt: number | null }) {
 export function StagePanel({ state }: { state: StageState }) {
   const on = state.phase !== "idle";
   const eventLine = useEventLine(on);
-  const says = state.blocks.filter((block) => block.kind === "say");
+  const says = state.blocks.filter((block) => block.kind === "say" && isSpeakable(plainSpeech(block.body)));
   const visuals = state.blocks.filter((block) => block.kind !== "say");
   const busy = state.phase === "thinking" || state.phase === "answering";
   const answering = Boolean(state.ack || state.blocks.length || state.activity || state.error);

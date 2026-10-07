@@ -4,7 +4,7 @@
 
 import { finishedSpeech, parseAnswer } from "./answer-format";
 import { streamDemoAnswer } from "./demo";
-import { answerModel, fastModel, fireworksKey, streamChat, type ChatMessage } from "./fireworks";
+import { answerModel, fastModel, fastReasoningEffort, fireworksKey, streamChat, type ChatMessage } from "./fireworks";
 import { ACK_PROMPT, answerPrompt } from "./prompt";
 import { beginTurn, closeStageAfter, updateTurn, type StageState } from "./state";
 import { runTool, toolActivity, toolSpecs } from "./tools";
@@ -31,7 +31,7 @@ export function cancelTurn(): void {
 
 async function acknowledge(question: string, signal: AbortSignal): Promise<string> {
   const ask = streamChat(
-    { model: fastModel(), messages: [{ role: "system", content: ACK_PROMPT }, { role: "user", content: question }], maxTokens: 24, temperature: 0.8 },
+    { model: fastModel(), messages: [{ role: "system", content: ACK_PROMPT }, { role: "user", content: question }], maxTokens: 24, temperature: 0.8, reasoningEffort: fastReasoningEffort() },
     () => {},
     signal,
   ).then(({ text }) => text.replace(/["“”]/g, "").trim().split("\n")[0] || FALLBACK_ACK);
