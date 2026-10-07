@@ -12,7 +12,7 @@ import AVFoundation
 import Foundation
 import Speech
 
-let vocabulary = ["worm", "hey worm", "B@B", "Blockchain at Berkeley", "B@by", "Hyperliquid", "EAGLE", "MTP", "DeepSeek", "Fireworks", "Ethereum", "Solana", "chumming", "spotbot"]
+let vocabulary = ["worm", "hey worm", "B@B", "Blockchain at Berkeley", "B@by", "B@bies", "jam", "Spotify Jam", "start a jam", "show the jam", "Hyperliquid", "EAGLE", "MTP", "DeepSeek", "Fireworks", "Ethereum", "Solana", "chumming", "spotbot", "queue"]
 
 func emit(_ object: [String: Any]) {
   guard let data = try? JSONSerialization.data(withJSONObject: object), let line = String(data: data, encoding: .utf8) else { return }

@@ -13,6 +13,15 @@ import { dimMusic, isSpeaking, releaseMusic } from "./voice";
 const HELPER = swiftHelper("listen", "Listen.swift");
 /** Recognisers hear "hey worm" as one word, or as "a worm" when it is said quickly. */
 const WAKE = /\b(?:hey|hi|okay|ok|yo|a)[,\s]*worm\b|\bheyworm\b/i;
+/** The recogniser's usual mishearings of club words, put right before anything is shown or asked. */
+const CORRECTIONS: [RegExp, string][] = [
+  [/\bgym\b/gi, "jam"],
+  [/\bbobbies\b/gi, "B@bies"],
+  [/\bbobby\b/gi, "B@by"],
+  [/\bbob\b/gi, "B@B"],
+];
+/** A follow-up taken without the wake word must be at least this many words, so passing chatter is not taken for one. */
+const FOLLOW_UP_MIN_WORDS = 3;
 const DISMISS = /\b(thanks|thank you|cheers|never ?mind|stop|that's all)[,\s]+worm\b|\bworm[,\s]+(stop|never ?mind|that's all|thanks)\b/i;
 /** After a final result, the question is asked only if nothing more is said within this long. */
 const PAUSE_MS = 900;
@@ -30,8 +39,11 @@ export const earsEnabled = () => process.platform === "darwin" && process.env.ST
 
 type Heard = { text?: string; final?: boolean; status?: string; error?: string };
 
+const corrected = (text: string) => CORRECTIONS.reduce((out, [pattern, word]) => out.replace(pattern, word), text);
+
 /** The words after the wake phrase, tidied: "Heyworm, how does EAGLE work" → "How does EAGLE work". */
-function afterWake(text: string): string {
+function afterWake(raw: string): string {
+  const text = corrected(raw);
   const match = WAKE.exec(text);
   const rest = match ? text.slice(match.index + match[0].length) : text;
   const trimmed = rest.replace(/^[\s,.!?:-]+/, "");
@@ -62,7 +74,7 @@ function wake(text: string): void {
 
 function hearMore(capture: Capture, heard: Required<Pick<Heard, "text" | "final">>): void {
   clearTimeout(capture.askTimer);
-  const words = capture.settled ? heard.text : afterWake(heard.text);
+  const words = capture.settled ? corrected(heard.text) : afterWake(heard.text);
   if (heard.final) {
     capture.settled = [capture.settled, words].filter(Boolean).join(" ");
     capture.live = "";
@@ -73,6 +85,12 @@ function hearMore(capture: Capture, heard: Required<Pick<Heard, "text" | "final"
     capture.live = words;
   }
   updateTurn(capture.turn, (state) => ({ ...state, heard: questionSoFar(capture) }));
+}
+
+/** Speech while Worm's last answer is still up, just after it finished: taken as a follow-up without "hey worm". */
+function isFollowUp(text: string): boolean {
+  const { phase, listenUntil } = stageState();
+  return phase === "done" && listenUntil !== null && Date.now() < listenUntil && text.trim().split(/\s+/).length >= FOLLOW_UP_MIN_WORDS;
 }
 
 /** Acts on one line from the listener. Exported so the wake and pause logic can be checked without a microphone. */
@@ -92,6 +110,7 @@ export function hearLine(line: string): void {
     return;
   }
   if (WAKE.test(heard.text) && !ears.capture) return wake(heard.text);
+  if (!ears.capture && isFollowUp(heard.text)) wake(heard.text);
   if (ears.capture) hearMore(ears.capture, { text: heard.text, final: heard.final === true });
 }
 

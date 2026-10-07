@@ -4,6 +4,8 @@
 import { getClubNews } from "../club-news";
 import { getEvents } from "../events";
 import { getFeed } from "../feed";
+import { fetchCandles } from "../candles";
+import { recordJamTrigger } from "../jam";
 import { fetchHyperliquidQuotes, makeAsset } from "../markets";
 import { getNowPlaying } from "../now-playing";
 import { addToQueue, getQueue, SpotifyError, searchTracks, type TrackCard } from "../spotify";
@@ -115,6 +117,30 @@ async function volume(args: ToolArgs): Promise<unknown> {
   return { volume: Math.round(Math.min(100, Math.max(0, level))), was: current };
 }
 
+const HOUR_LABEL = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric" });
+
+/** A token's last 24 hours as hourly closing prices, for drawing or comparing. */
+async function priceHistory(args: ToolArgs): Promise<unknown> {
+  const symbol = text(args.symbol, 12).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const asset = makeAsset("hyperliquid", symbol, symbol, symbol);
+  if (!asset) return { error: `not a market symbol: ${symbol}` };
+  const candles = await fetchCandles(asset, AbortSignal.timeout(SLACK_TIMEOUT_MS));
+  if (candles.length < 2) return { error: `no price history for ${symbol}` };
+  const hourly = candles.filter((_, i) => i % 2 === 1 || i === candles.length - 1);
+  const first = candles[0].open;
+  const last = candles[candles.length - 1].close;
+  return {
+    symbol,
+    changePct: Number((((last - first) / first) * 100).toFixed(2)),
+    hourly: hourly.map((candle) => ({ hour: HOUR_LABEL.format(candle.at), close: Number(candle.close.toPrecision(6)) })),
+  };
+}
+
+async function showJam(): Promise<unknown> {
+  const { shown } = await recordJamTrigger({ link: null, postedAtMs: Date.now(), user: null });
+  return shown ? { shown: "The Spotify Jam QR code is on the screen for a minute, in the now-playing corner." } : { error: "No Jam link has been set yet; someone can set one in Slack with @bot jam <invite link>" };
+}
+
 const TOOLS: Record<string, Tool> = {
   search_slack: {
     spec: tool("search_slack", "Search the club's Slack messages. Use for anything about the club, its members, projects, task assignments, decisions or plans.", { query: { type: "string", description: "Search words" } }, ["query"]),
@@ -130,6 +156,16 @@ const TOOLS: Record<string, Tool> = {
     spec: tool("market_price", "The live price and 24-hour change of a crypto token on Hyperliquid.", { symbol: { type: "string", description: "Ticker, e.g. ETH" } }, ["symbol"]),
     activity: (args) => `Checking the ${text(args.symbol, 12).toUpperCase()} price`,
     run: marketPrice,
+  },
+  price_history: {
+    spec: tool("price_history", "A token's last 24 hours as hourly closing prices and its change over the day. Use it to draw or compare how tokens moved.", { symbol: { type: "string", description: "Ticker, e.g. ETH" } }, ["symbol"]),
+    activity: (args) => `Getting ${text(args.symbol, 12).toUpperCase()}'s last day`,
+    run: priceHistory,
+  },
+  show_jam: {
+    spec: tool("show_jam", "Show the QR code for joining the clubroom's Spotify Jam, so people can add songs from their phones.", {}, []),
+    activity: () => "Bringing up the Jam QR",
+    run: showJam,
   },
   now_playing: {
     spec: tool("now_playing", "The song playing in the clubroom on Spotify, with its album cover (artworkUrl) and position.", {}, []),

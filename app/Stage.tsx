@@ -8,7 +8,7 @@ import type { StageBlock, StageState } from "@/lib/stage/state";
 import { Visual } from "./StagePieces";
 import styles from "./Stage.module.css";
 
-const IDLE: StageState = { turn: 0, phase: "idle", heard: "", heardFinal: false, ack: null, activity: null, blocks: [], error: null, closesAt: null };
+const IDLE: StageState = { turn: 0, phase: "idle", heard: "", heardFinal: false, ack: null, activity: null, blocks: [], error: null, closesAt: null, listenUntil: null };
 const EVENTS_POLL_MS = 60_000;
 /** Sizes for Worm's words, largest first: the largest at which they fit is used. */
 const SAY_SIZES = [40, 34, 30, 26];

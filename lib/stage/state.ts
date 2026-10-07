@@ -27,12 +27,14 @@ export type StageState = {
   error: string | null;
   /** When the stage hands the screen back (ms since epoch), once the answer is over. */
   closesAt: number | null;
+  /** Until when (ms since epoch) a follow-up is taken without "hey worm", after Worm has finished answering. */
+  listenUntil: number | null;
 };
 
 type Listener = (state: StageState) => void;
 type Runtime = { state: StageState; listeners: Set<Listener>; closeTimer?: NodeJS.Timeout };
 
-const IDLE: StageState = { turn: 0, phase: "idle", heard: "", heardFinal: false, ack: null, activity: null, blocks: [], error: null, closesAt: null };
+const IDLE: StageState = { turn: 0, phase: "idle", heard: "", heardFinal: false, ack: null, activity: null, blocks: [], error: null, closesAt: null, listenUntil: null };
 
 const shared = globalThis as { __babStage?: Runtime };
 const runtime: Runtime = (shared.__babStage ??= { state: IDLE, listeners: new Set() });

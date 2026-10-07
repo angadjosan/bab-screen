@@ -15,6 +15,26 @@ const MAX_TOOL_ROUNDS = 4;
 const ANSWER_MAX_TOKENS = 2_000;
 /** The answer stays on screen this long after Worm has finished speaking it. */
 const LINGER_MS = 40_000;
+/** After Worm finishes, a follow-up is taken without "hey worm" for this long. */
+const FOLLOW_UP_MS = 12_000;
+/** Earlier questions and answers are remembered this long after the last one, so "show that as a graph" works. */
+const MEMORY_MS = 3 * 60_000;
+const MEMORY_EXCHANGES = 4;
+
+type Exchange = { question: string; answer: string; at: number };
+const memory = globalThis as { __babStageMemory?: Exchange[] };
+
+/** The conversation so far, as messages: the recent questions and Worm's answers, oldest first. */
+function rememberedMessages(now: number): ChatMessage[] {
+  const exchanges = (memory.__babStageMemory ?? []).filter((exchange) => now - exchange.at < MEMORY_MS).slice(-MEMORY_EXCHANGES);
+  return exchanges.flatMap((exchange): ChatMessage[] => [{ role: "user", content: exchange.question }, { role: "assistant", content: exchange.answer }]);
+}
+
+function remember(question: string, answer: string): void {
+  const now = Date.now();
+  const kept = (memory.__babStageMemory ?? []).filter((exchange) => now - exchange.at < MEMORY_MS);
+  memory.__babStageMemory = [...kept, { question, answer, at: now }].slice(-MEMORY_EXCHANGES);
+}
 const ERROR_LINGER_MS = 12_000;
 
 type Current = { turn: number; controller: AbortController };
@@ -47,12 +67,13 @@ function showAnswer(turn: number, text: string, finished: boolean): ReturnType<t
 }
 
 async function answer(turn: number, question: string, speaker: ReturnType<typeof makeSpeaker>, signal: AbortSignal): Promise<void> {
-  const messages: ChatMessage[] = [{ role: "system", content: answerPrompt(new Date()) }, { role: "user", content: question }];
+  const messages: ChatMessage[] = [{ role: "system", content: answerPrompt(new Date()) }, ...rememberedMessages(Date.now()), { role: "user", content: question }];
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
     const tools = round < MAX_TOOL_ROUNDS ? toolSpecs() : undefined;
     const reply = await streamChat({ model: answerModel(), messages, tools, maxTokens: ANSWER_MAX_TOKENS }, (soFar) => speaker.sayNew(speechSoFar(showAnswer(turn, soFar, false))), signal);
     if (!reply.toolCalls.length) {
       speaker.sayNew(speechSoFar(showAnswer(turn, reply.text, true)));
+      remember(question, reply.text);
       return;
     }
     messages.push({ role: "assistant", content: reply.text || null, tool_calls: reply.toolCalls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } })) });
@@ -97,6 +118,7 @@ export async function askWorm(question: string, openTurn?: number, options: { de
     await speaker.done();
     releaseMusic();
     closeStageAfter(turn, LINGER_MS);
+    updateTurn(turn, (state) => ({ ...state, listenUntil: Date.now() + FOLLOW_UP_MS }));
   } catch (error) {
     if (controller.signal.aborted) return;
     console.warn("[stage] answer failed:", error instanceof Error ? error.message : error);
