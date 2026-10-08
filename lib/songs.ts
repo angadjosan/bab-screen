@@ -50,9 +50,7 @@ const MAX_LOG = 200;
 const MIN_RUN_INTERVAL_MS = 5_000;
 const SLACK_ERROR_BACKOFF_MS = 60_000;
 const DEFAULT_MAX_AGE_MINUTES = 30;
-const DEFAULT_POLL_SECONDS = 20;
-/** The poll while the Slack listener is up and nudges a run for every new message. */
-const LIVE_POLL_MS = 5 * 60_000;
+const DEFAULT_POLL_SECONDS = 5;
 /** A nudged run that does not see its message yet (Slack's history lags the event) looks again. */
 const NUDGE_ATTEMPTS = 3;
 const NUDGE_RETRY_MS = 3_000;
@@ -200,6 +198,7 @@ type Runtime = {
   /** Requests waiting after the last run; while any wait, the poll keeps its full pace. */
   pending: number;
   timer?: ReturnType<typeof setInterval>;
+  timerSeconds?: number;
   tick?: () => void;
   slackRetryAt: number;
   slackCanRead: boolean | null;
@@ -248,7 +247,7 @@ function pollSeconds(): number {
   if (!raw) return DEFAULT_POLL_SECONDS;
   const seconds = Number(raw);
   if (!Number.isFinite(seconds) || seconds <= 0) return 0; // 0 / "off" disables the timer
-  return Math.max(seconds, 10);
+  return Math.max(seconds, 5);
 }
 
 function requiredScopes(mode: SongsMode): string[] {
@@ -493,12 +492,23 @@ async function handleMessage(state: SongsState, message: SlackMessage & { ts: st
   }
   if (jam) {
     // Never a song request as well: a Jam invite can be a spotify.link short link, which findTrackLinks would pick up.
-    await recordJamTrigger({ link: jam.link, postedAtMs: Number(message.ts) * 1000, user: message.user });
+    await handleJamRequest(message, jam.link);
     return;
   }
   if (isAlreadyHandled(state, message.ts)) return;
   await addTrackRequests(state, message);
 }
+
+async function handleJamRequest(message: SlackMessage & { ts: string; user: string }, link: string | null): Promise<void> {
+  const result = await recordJamTrigger({ link, postedAtMs: Number(message.ts) * 1000, user: message.user });
+  if (result.shown && result.link) {
+    await replyEphemeral(message.user, `Join the Spotify Jam: <${result.link}|Open Jam invite>\nThe QR is also on the screen for one minute.`);
+  } else if (result.error) {
+    await replyEphemeral(message.user, `Could not show the Jam: ${slackText(result.error)}`);
+  }
+}
+
+const slackText = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function isAlreadyHandled(state: SongsState, ts: string): boolean {
   return state.pending.some((request) => request.ts === ts) || state.log.some((result) => result.id.split("#")[0] === ts);
@@ -552,6 +562,19 @@ function recordSlackFailure(error: unknown): void {
   runtime.slackCanRead = false;
   runtime.slackError = slackError.needed ? `${slackError.code} (needs ${slackError.needed})` : slackError.code;
   runtime.slackRetryAt = Date.now() + Math.max(SLACK_ERROR_BACKOFF_MS, slackError.retryAfterMs ?? 0);
+}
+
+/** Jam results are private to the requester and do not depend on song-request thread replies. */
+async function replyEphemeral(user: string, text: string): Promise<boolean> {
+  const channel = songsChannel();
+  if (!channel) return false;
+  try {
+    await slackCall("chat.postEphemeral", { channel, user, text }, true);
+    return true;
+  } catch (error) {
+    console.error("Jam private reply failed:", error instanceof SlackError ? error.code : "unknown");
+    return false;
+  }
 }
 
 async function replyInThread(request: PendingRequest, text: string): Promise<boolean> {
@@ -1226,8 +1249,7 @@ export function syncSongs(options: { force?: boolean } = {}): Promise<SongsStatu
 
 // Always point the timer at the newest copy of this module (dev-mode reloads re-run this line).
 runtime.tick = () => {
-  if (slackListenerLive() && runtime.pending === 0 && Date.now() - runtime.lastRunAt < LIVE_POLL_MS) return;
-  void syncSongs();
+  void syncSongs({ force: true });
 };
 
 /**
@@ -1249,14 +1271,19 @@ export async function nudgeSongs(ts: string | null = null): Promise<void> {
 }
 
 /**
- * Starts the background poll (every SONGS_POLL_SECONDS, default 20; 0 disables it). Safe to call
+ * Starts the background poll (every SONGS_POLL_SECONDS, default 5; 0 disables it). Safe to call
  * repeatedly: there is one timer per server process.
  */
 export function ensureSongsLoop(): boolean {
   const seconds = pollSeconds();
+  if (runtime.timer && runtime.timerSeconds !== seconds) {
+    clearInterval(runtime.timer);
+    runtime.timer = undefined;
+  }
   if (seconds === 0) return false;
   if (!runtime.timer) {
     runtime.timer = setInterval(() => runtime.tick?.(), seconds * 1000);
+    runtime.timerSeconds = seconds;
     runtime.timer.unref?.();
   }
   return true;

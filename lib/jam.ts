@@ -1,13 +1,12 @@
 // Jam QR: for one minute after someone mentions the Slack bot with the word "jam", the now-playing
 // tile shows a QR code of the Spotify Jam's invite link.
 //
-// Spotify has no API for Jams, so nothing here starts, finds or checks one. The Jam is started by
-// hand in the Spotify app and its invite link is given to the server: SPOTIFY_JAM_URL in
-// .env.local, or "@bot jam <link>" in Slack, which is stored in .data/jam.json and wins over the
-// env var. The Slack side (reading the channel, knowing the bot's user ID) is in lib/songs.ts.
+// Bare "@bot jam" asks the Spicetify extension for a fresh invite using Spotify's internal APIs.
+// "@bot jam <link>" still accepts a manually supplied invitation.
 
 import qrcode from "qrcode-generator";
 import { readJson, writeJson } from "./songs-store";
+import { bridgeStatus, requestFreshJam } from "./jam-bridge";
 
 const STATE_FILE = "jam.json";
 /** How long the QR stays up, counted from the moment the server sees the message. */
@@ -33,6 +32,8 @@ type JamState = {
   urlSetBy: string | null;
   /** Epoch ms until which the tile shows the QR. */
   showUntil: number | null;
+  source?: "slack" | "spotify";
+  error?: string | null;
 };
 
 /** What the now-playing tile needs while the QR is up. */
@@ -53,10 +54,12 @@ export type JamQr = { modules: number; path: string };
 export type JamStatus = {
   link: string | null;
   /** slack: given with "@bot jam <link>". env: SPOTIFY_JAM_URL. */
-  source: "slack" | "env" | null;
+  source: "slack" | "spotify" | "env" | null;
   setAt: string | null;
   /** Set while the QR is on screen. */
   showingUntil: string | null;
+  bridge?: ReturnType<typeof bridgeStatus>;
+  error?: string | null;
 };
 
 // --- Links -----------------------------------------------------------------------------------
@@ -129,12 +132,14 @@ async function loadState(): Promise<JamState> {
     urlSetAt: valid && typeof stored.urlSetAt === "string" ? stored.urlSetAt : null,
     urlSetBy: valid && typeof stored.urlSetBy === "string" ? stored.urlSetBy : null,
     showUntil: valid && typeof stored.showUntil === "number" && Number.isFinite(stored.showUntil) ? stored.showUntil : null,
+    source: valid && stored.source === "spotify" ? "spotify" : "slack",
+    error: valid && typeof stored.error === "string" ? stored.error : null,
   };
 }
 
 /** The link to show: the one given in Slack, else SPOTIFY_JAM_URL. */
-function currentLink(state: JamState): { url: string; source: "slack" | "env" } | null {
-  if (state.url) return { url: state.url, source: "slack" };
+function currentLink(state: JamState): { url: string; source: "slack" | "spotify" | "env" } | null {
+  if (state.url) return { url: state.url, source: state.source ?? "slack" };
   const fromEnv = jamLink(process.env.SPOTIFY_JAM_URL);
   return fromEnv ? { url: fromEnv, source: "env" } : null;
 }
@@ -148,24 +153,47 @@ export async function recordJamTrigger(trigger: {
   /** When the message was posted (epoch ms). */
   postedAtMs: number;
   user: string | null;
-}): Promise<{ stored: boolean; shown: boolean }> {
+}): Promise<{ stored: boolean; shown: boolean; link?: string; error?: string }> {
   try {
     const now = Date.now();
     const state = await loadState();
-    const link = jamLink(trigger.link);
-    const stored = Boolean(link) && link !== state.url;
-    if (link && stored) {
-      state.url = link;
-      state.urlSetAt = new Date(now).toISOString();
-      state.urlSetBy = trigger.user;
+    const fresh = Number.isFinite(trigger.postedAtMs) && now - trigger.postedAtMs <= JAM_STALE_MS;
+    const supplied = jamLink(trigger.link);
+    if (!supplied && !fresh) return { stored: false, shown: false };
+    const resolved = await resolveJamLink(supplied);
+    if (resolved.error) {
+      state.showUntil = null;
+      state.error = resolved.error;
+      await writeJson(STATE_FILE, state, 0o600);
+      console.error("Jam:", resolved.error);
+      return { stored: false, shown: false, error: resolved.error };
     }
-    const shown = Number.isFinite(trigger.postedAtMs) && now - trigger.postedAtMs <= JAM_STALE_MS;
-    if (shown) state.showUntil = now + JAM_SHOW_MS;
-    if (stored || shown) await writeJson(STATE_FILE, state, 0o600);
-    return { stored, shown };
+    const link = resolved.link;
+    const stored = Boolean(link) && link !== state.url;
+    if (link) {
+      state.url = link;
+      state.urlSetAt = new Date().toISOString();
+      state.urlSetBy = trigger.user;
+      state.source = trigger.link ? "slack" : "spotify";
+      state.error = null;
+    }
+    const shown = fresh;
+    if (shown) state.showUntil = Date.now() + JAM_SHOW_MS;
+    await writeJson(STATE_FILE, state, 0o600);
+    return { stored, shown, ...(shown && link ? { link } : {}) };
   } catch (error) {
     console.error("Jam QR: could not record the request:", error instanceof Error ? error.message : String(error));
     return { stored: false, shown: false };
+  }
+}
+
+async function resolveJamLink(supplied: string | null): Promise<{ link: string | null; error?: string }> {
+  if (supplied) return { link: supplied };
+  try {
+    const link = jamLink(await requestFreshJam());
+    return link ? { link } : { link: null, error: "Spotify returned an invalid Jam invitation." };
+  } catch (error) {
+    return { link: null, error: error instanceof Error ? error.message : "Could not create a Spotify Jam." };
   }
 }
 
@@ -228,8 +256,10 @@ export async function getJamStatus(): Promise<JamStatus> {
     return {
       link: link?.url ?? null,
       source: link?.source ?? null,
-      setAt: link?.source === "slack" ? state.urlSetAt : null,
+      setAt: link?.source === "env" ? null : state.urlSetAt,
       showingUntil: showing ? new Date(state.showUntil as number).toISOString() : null,
+      bridge: bridgeStatus(),
+      error: state.error ?? null,
     };
   } catch {
     return { link: null, source: null, setAt: null, showingUntil: null };

@@ -306,6 +306,25 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", fit);
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    let timer: number;
+    const show = () => {
+      root.removeAttribute("data-cursor-idle");
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => root.setAttribute("data-cursor-idle", ""), 2_000);
+    };
+    show();
+    window.addEventListener("pointermove", show, true);
+    window.addEventListener("pointerdown", show, true);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointermove", show, true);
+      window.removeEventListener("pointerdown", show, true);
+      root.removeAttribute("data-cursor-idle");
+    };
+  }, []);
+
   return (
     <MarketsProvider>
       <main className={`dashboard ${focus ? "is-focus" : ""} ${staged ? "is-stage" : ""}`}>

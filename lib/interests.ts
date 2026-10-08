@@ -15,7 +15,7 @@
 // of letters, digits and a little punctuation, and the list is capped in count and length. The
 // prompt carries them as data in their own block, never as instructions.
 
-import Database from "better-sqlite3";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { tidy } from "./feed-parse";
 import { dataDir } from "./songs-store";
@@ -90,10 +90,16 @@ function dbFile(): string | null {
   return file === ":memory:" ? null : file;
 }
 
-/** Every table query in its own try, so one missing table does not hide the others. */
-function rowsOf<T>(db: Database.Database, sql: string, ...params: unknown[]): T[] {
+/** Every table query runs in the system SQLite process, keeping its native addon out of Next dev. */
+function rowsOf<T>(file: string, sql: string): T[] {
   try {
-    return db.prepare(sql).all(...params) as T[];
+    const output = execFileSync("/usr/bin/sqlite3", ["-readonly", "-json", file, sql], {
+      encoding: "utf8",
+      timeout: 1_000,
+      maxBuffer: 512 * 1024,
+    });
+    const rows: unknown = JSON.parse(output || "[]");
+    return Array.isArray(rows) ? rows as T[] : [];
   } catch {
     return [];
   }
@@ -106,13 +112,10 @@ function rowsOf<T>(db: Database.Database, sql: string, ...params: unknown[]): T[
 export function readInterests(now = Date.now()): FeedInterests | null {
   const file = dbFile();
   if (!file) return null;
-  let db: Database.Database | null = null;
   try {
-    db = new Database(file, { readonly: true, fileMustExist: true, timeout: 1_000 });
     const checkins = rowsOf<{ who: string; who_id: string | null; status: string; at: number }>(
-      db,
-      "SELECT who, who_id, status, at FROM checkins WHERE at > ? ORDER BY at ASC",
-      now - CHECKIN_WINDOW_MS,
+      file,
+      `SELECT who, who_id, status, at FROM checkins WHERE at > ${Math.trunc(now - CHECKIN_WINDOW_MS)} ORDER BY at ASC`,
     );
     const latest = new Map<string, { person: Person; status: string }>();
     for (const row of checkins) {
@@ -123,11 +126,11 @@ export function readInterests(now = Date.now()): FeedInterests | null {
     const present = [...latest.values()].filter((entry) => entry.status === "in").map((entry) => entry.person);
 
     const memories = rowsOf<{ about_key: string; text: string; created_at: number }>(
-      db,
+      file,
       "SELECT about_key, text, created_at FROM memories WHERE kind = 'interest' ORDER BY id DESC LIMIT 2000",
     ).map((row): Row => ({ key: row.about_key, id: null, text: row.text, at: row.created_at }));
     const members = rowsOf<{ slack_id: string; name: string | null; interests: string; updated_at: number }>(
-      db,
+      file,
       "SELECT slack_id, name, interests, updated_at FROM members WHERE interests != ''",
     ).map((row): Row => ({ key: nameKey(row.name ?? ""), id: row.slack_id, text: row.interests, at: row.updated_at }));
     const all = [...memories, ...members];
@@ -148,11 +151,5 @@ export function readInterests(now = Date.now()): FeedInterests | null {
     return interests.length ? { scope: "members", people: peopleIn(all), interests } : null;
   } catch {
     return null;
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // nothing to do
-    }
   }
 }

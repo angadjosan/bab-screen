@@ -18,6 +18,7 @@ const usdc = (dollars: number) => parseUnits(String(dollars), 6);
 const dollars = (amount: string) => Number(formatUnits(BigInt(amount), 6));
 const MIN_USD = 1;
 const DUST = usdc(0.1);
+const MATCH_TOLERANCE = usdc(0.05);
 const TICK_MS = 3_000;
 const WAIT_MS = 10 * 60_000;
 /** The payout is held this long so the chain does not show the winner before the coin lands. */
@@ -31,7 +32,7 @@ const MAX_BLOCK_RANGE = 1_000n;
 type Side = "heads" | "tails";
 type Deposit = { id: string; from: Address; amount: string; at: number };
 type Transfer = { id: string; to: Address; amount: string; notBefore: number; nonce?: number; raw?: Hex; hash?: Hex; signedAt?: number; sentAt?: number; done?: boolean };
-type Game = { id: string; heads: Address; tails: Address; stake: string; winner: Side; at: number };
+type Game = { id: string; heads: Address; tails: Address; stake: string; pot?: string; winner: Side; at: number };
 type State = { network: string; address: Address; cursor: string | null; nonce: number; waiting: Deposit | null; game: Game | null; transfers: Transfer[]; problem: string | null };
 type Config = NonNullable<ReturnType<typeof config>>;
 
@@ -44,8 +45,9 @@ export type CoinFlipView =
       qr: JamQr;
       network: string;
       minUsd: number;
+      matchToleranceUsd: number;
       waiting: { from: Address; usd: number; remainingMs: number } | null;
-      game: { id: string; heads: Address; tails: Address; stakeUsd: number; winner: Side; ageMs: number; payout: { url: string; qr: JamQr } | null } | null;
+      game: { id: string; heads: Address; tails: Address; stakeUsd: number; potUsd: number; winner: Side; ageMs: number; payout: { url: string; qr: JamQr } | null } | null;
       problem: string | null;
     };
 
@@ -72,11 +74,12 @@ function scan(cfg: Config, state: State, deposits: Deposit[], now: number) {
     if (amount < DUST) continue;
     if (amount < usdc(MIN_USD)) refund(deposit);
     else if (!state.waiting) state.waiting = deposit;
-    else if (state.waiting.amount !== deposit.amount) refund(deposit);
+    else if ((amount > BigInt(state.waiting.amount) ? amount - BigInt(state.waiting.amount) : BigInt(state.waiting.amount) - amount) > MATCH_TOLERANCE) refund(deposit);
     else {
       const winner: Side = randomInt(2) ? "heads" : "tails";
-      state.game = { id: deposit.id, heads: state.waiting.from, tails: deposit.from, stake: deposit.amount, winner, at: now };
-      state.transfers.push({ id: `payout:${deposit.id}`, to: state.game[winner], amount: String(amount * 2n), notBefore: now + REVEAL_MS });
+      const pot = String(BigInt(state.waiting.amount) + amount);
+      state.game = { id: deposit.id, heads: state.waiting.from, tails: deposit.from, stake: state.waiting.amount, pot, winner, at: now };
+      state.transfers.push({ id: `payout:${deposit.id}`, to: state.game[winner], amount: pot, notBefore: now + REVEAL_MS });
       state.waiting = null;
     }
   }
@@ -160,9 +163,10 @@ export async function getCoinFlipView(): Promise<CoinFlipView> {
     qr: buildQr(cfg.account.address),
     network: cfg.label,
     minUsd: MIN_USD,
+    matchToleranceUsd: dollars(String(MATCH_TOLERANCE)),
     waiting: waiting && { from: waiting.from, usd: dollars(waiting.amount), remainingMs: Math.max(0, waiting.at + WAIT_MS - now) },
     game: game && now - game.at < GAME_SHOW_MS
-      ? { id: game.id, heads: game.heads, tails: game.tails, stakeUsd: dollars(game.stake), winner: game.winner, ageMs: now - game.at, payout: receipt ? { url: receipt, qr: buildQr(receipt) } : null }
+      ? { id: game.id, heads: game.heads, tails: game.tails, stakeUsd: dollars(game.stake), potUsd: dollars(game.pot ?? String(BigInt(game.stake) * 2n)), winner: game.winner, ageMs: now - game.at, payout: receipt ? { url: receipt, qr: buildQr(receipt) } : null }
       : null,
     problem: state.problem ?? shared.coinFlipError ?? null,
   };

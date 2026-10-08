@@ -37,6 +37,20 @@ p {
   margin: 0;
 }
 
+html[data-cursor-idle],
+html[data-cursor-idle] * {
+  cursor: none !important;
+}
+
+/* Hide the cursor over embedded and sandboxed surfaces too. Pointer movement removes this overlay. */
+html[data-cursor-idle] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  cursor: none;
+}
+
 /* Fixed 1920x1080 stage, scaled to the window by --fit (set in page.tsx). */
 .dashboard {
   position: fixed;
@@ -816,4 +830,3 @@ p {
   z-index: 3;
   align-self: start;
 }
-

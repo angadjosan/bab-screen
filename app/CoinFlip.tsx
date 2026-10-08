@@ -143,7 +143,7 @@ export function CoinFlip() {
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("coinflip") !== "demo") return;
     let n = 0;
-    const play = () => setGame({ id: `demo-${n += 1}`, heads: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F", tails: "0x2546BcD3c84621e976D8185a91A922aE77ECEc30", stakeUsd: 5, winner: Math.random() < .5 ? "heads" : "tails", ageMs: 0, payout: null });
+    const play = () => setGame({ id: `demo-${n += 1}`, heads: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F", tails: "0x2546BcD3c84621e976D8185a91A922aE77ECEc30", stakeUsd: 5, potUsd: 10, winner: Math.random() < .5 ? "heads" : "tails", ageMs: 0, payout: null });
     play();
     const timer = window.setInterval(play, DEMO_EVERY_MS);
     return () => window.clearInterval(timer);
@@ -179,7 +179,7 @@ export function CoinFlip() {
     return () => window.clearTimeout(done);
   }, [phase]);
 
-  const pot = game ? money(game.stakeUsd * 2) : "";
+  const pot = game ? money(game.potUsd) : "";
 
   return (
     <>
