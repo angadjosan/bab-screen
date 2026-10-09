@@ -11,8 +11,6 @@ const UNSETTLED_POLL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 /** The clock is re-read at the next start or end, and at least this often (midnight, a machine waking from sleep). */
 const MAX_TICK_MS = 30_000;
-/** Only the week ahead is shown: an event has to start within this long from now (or be under way). */
-const WEEK_AHEAD_MS = WEEK_DAYS * DAY_MS;
 
 const cx = (...names: Array<string | false | null | undefined>) => names.filter(Boolean).join(" ");
 
@@ -20,7 +18,7 @@ const cx = (...names: Array<string | false | null | undefined>) => names.filter(
 export type EventsState = {
   /** "loading" until the first answer, then the API's status. */
   status: EventsResponse["status"];
-  /** Events in the week ahead that have not ended. */
+  /** Events on the board that have not ended. */
   count: number;
 };
 
@@ -34,10 +32,12 @@ type Props = {
    * last event ends it stays drawn as it was, so the block can be faded out rather than blanked.
    */
   quietWhenEmpty?: boolean;
+  /** Columns on the board, today first; only events starting within that many days are listed. A week by default. */
+  days?: number;
 };
 
 /** /api/events, polled, with the server's clock: a screen with a wrong clock still flips events on time. */
-function useCalendar(fixed: CalendarEvent[] | undefined) {
+function useCalendar(fixed: CalendarEvent[] | undefined, days: number) {
   const [data, setData] = useState<EventsResponse | null>(null);
   const [now, setNow] = useState(() => Date.now());
   // Server clock minus this page's clock.
@@ -82,13 +82,13 @@ function useCalendar(fixed: CalendarEvent[] | undefined) {
 
   const formats = useMemo(() => formatsFor(safeZone(data?.timeZone)), [data?.timeZone]);
 
-  // Soonest first; anything that has ended, or starts more than a week out, is not there as of this render's `now`.
+  // Soonest first; anything that has ended, or starts past the last column, is not there as of this render's `now`.
   const list = useMemo(() => {
     const source = fixed ?? data?.events ?? [];
     return source
-      .filter((event) => Date.parse(event.start) < now + WEEK_AHEAD_MS && Date.parse(event.end) > now)
+      .filter((event) => Date.parse(event.start) < now + days * DAY_MS && Date.parse(event.end) > now)
       .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
-  }, [fixed, data, now]);
+  }, [fixed, data, now, days]);
 
   // Own clock: wake at the next start or end among the events, so one turns live or leaves on time.
   useEffect(() => {
@@ -179,19 +179,19 @@ function LaneBar({ lane, now, formats, nextId }: BoardProps & { lane: Lane }) {
 }
 
 /**
- * The week as a wall calendar: seven columns from today, each headed by its date and listing that day's events
+ * The week as a wall calendar: a column a day from today, each headed by its date and listing that day's events
  * with their time, place and title. Events across several days are bars over the columns they cover. A day with
  * more events than fit says how many more.
  */
-function WeekBoard({ events, now, formats }: { events: readonly CalendarEvent[]; now: number; formats: Formats }) {
+function WeekBoard({ events, now, formats, days }: { events: readonly CalendarEvent[]; now: number; formats: Formats; days: number }) {
   const board = useRef<HTMLDivElement>(null);
   const today = formats.dayNumber(now);
-  const columns = weekColumns(events, now, formats);
-  const lanes = weekLanes(events, now, formats);
+  const columns = weekColumns(events, now, formats, days);
+  const lanes = weekLanes(events, now, formats, days);
   const shared = { now, formats, nextId: pickNext(events, now)?.id ?? null };
   const fit = useDayFit(board, events.map((event) => event.id).join() + lanes.length);
   return (
-    <div ref={board} className={styles.board} style={{ "--days": WEEK_DAYS } as CSSProperties}>
+    <div ref={board} className={styles.board} style={{ "--days": days } as CSSProperties}>
       {columns.map(({ day, events: dayEvents }, i) => (
         <div key={day} className={cx(styles.dayHead, day === today && styles.today, dayEvents.length === 0 && styles.quiet)} style={{ gridColumn: i + 1 }}>
           <span className={styles.date}>{formats.dayOfMonth(day)}</span>
@@ -237,8 +237,8 @@ function emptyNote(status: EventsResponse["status"], fixed: boolean, quietWhenEm
 }
 
 /** The week ahead from the club calendar, as a wall calendar (see WeekBoard). Fills its container. */
-export function Events({ events: fixed, onState, quietWhenEmpty = false }: Props) {
-  const { status, list, now, formats } = useCalendar(fixed);
+export function Events({ events: fixed, onState, quietWhenEmpty = false, days = WEEK_DAYS }: Props) {
+  const { status, list, now, formats } = useCalendar(fixed, days);
   useReport(onState, { status, count: list.length });
   const shown = useHeldList(list, quietWhenEmpty);
   if (!shown.length) {
@@ -252,7 +252,7 @@ export function Events({ events: fixed, onState, quietWhenEmpty = false }: Props
 
   return (
     <section className={styles.events} aria-label="Upcoming events">
-      <WeekBoard events={shown} now={now} formats={formats} />
+      <WeekBoard events={shown} now={now} formats={formats} days={days} />
     </section>
   );
 }
