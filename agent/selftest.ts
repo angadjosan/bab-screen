@@ -286,7 +286,7 @@ async function main() {
     assert.equal(pickBusyThread(threads, now, 7), null);
   });
 
-  await test("HTTP: /health, /speaking, POST /voice with rule commands", async () => {
+  await test("HTTP: /health, and no spoken requests", async () => {
     setChatClient(null);
     const server = await startHttp(0);
     const address = server.address();
@@ -297,13 +297,7 @@ async function main() {
       assert.equal(health.ok, true);
       assert.equal(health.llm.configured, false);
       assert.ok(health.missing.some((line) => line.startsWith("FIREWORKS_API_KEY")));
-      assert.deepEqual(await (await fetch(`${base}/speaking`)).json(), { speaking: false });
-      const voice = async (text: string) => (await (await fetch(`${base}/voice`, { method: "POST", body: JSON.stringify({ text }) })).json()) as { reply: string; path: string };
-      const pause = await voice("pause");
-      assert.equal(pause.path, "rules");
-      const party = await voice("Jarvis, preset party");
-      assert.equal(party.path, "rules");
-      assert.equal((await fetch(`${base}/voice`, { method: "POST", body: "nope" })).status, 400);
+      assert.equal((await fetch(`${base}/voice`, { method: "POST", body: JSON.stringify({ text: "pause" }) })).status, 404);
       assert.equal((await fetch(`${base}/health`, { headers: { Origin: "https://evil.example" } })).status, 403);
     } finally {
       server.close();

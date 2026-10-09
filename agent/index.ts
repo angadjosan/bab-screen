@@ -1,5 +1,5 @@
 // B@B Jarvis: the long-running agent on the Mac mini (`npm run jarvis`, or launchd's com.bab.jarvis).
-// Starts the local HTTP endpoint (voice, /health, /speaking), the Slack Socket Mode listener, the
+// Starts the local HTTP endpoint (/health), the Slack Socket Mode listener, the
 // Slack nudges for the wall's tiles (agent/feeds.ts), the scheduler (busy threads, songs loop) and
 // games (agent/games: a saved Mafia game picks up where it was).
 // Kept out of the Next process on purpose.
@@ -28,7 +28,7 @@ async function main() {
 
   try {
     server = await startHttp();
-    console.log(`[jarvis] HTTP on http://127.0.0.1:${config.port()} (POST /voice, GET /health, GET /speaking).`);
+    console.log(`[jarvis] HTTP on http://127.0.0.1:${config.port()} (GET /health).`);
   } catch (error) {
     console.error(`[jarvis] Could not listen on 127.0.0.1:${config.port()}:`, error instanceof Error ? error.message : error);
     process.exit(1);
