@@ -92,6 +92,7 @@ export function setVolume(volume: number): Promise<void> {
 export async function currentVolume(): Promise<number | null> {
   await state.ops;
   if (state.volume !== null) return state.volume;
-  const volume = Number(await spotify("get sound volume"));
-  return Number.isFinite(volume) ? volume : null;
+  const said = await spotify("get sound volume");
+  const volume = Number(said);
+  return said && Number.isFinite(volume) ? volume : null;
 }
