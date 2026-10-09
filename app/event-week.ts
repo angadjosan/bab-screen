@@ -74,26 +74,26 @@ export function isSpanning(event: CalendarEvent, formats: Formats): boolean {
   return event.allDay || last > first;
 }
 
-export function weekColumns(events: readonly CalendarEvent[], now: number, formats: Formats): DayColumn[] {
+export function weekColumns(events: readonly CalendarEvent[], now: number, formats: Formats, days = WEEK_DAYS): DayColumn[] {
   const today = formats.dayNumber(now);
-  const columns: DayColumn[] = Array.from({ length: WEEK_DAYS }, (_, i) => ({ day: today + i, events: [] }));
+  const columns: DayColumn[] = Array.from({ length: days }, (_, i) => ({ day: today + i, events: [] }));
   for (const event of events) {
     if (isSpanning(event, formats)) continue;
     const column = Math.max(eventDays(event, formats).first, today) - today;
-    if (column < WEEK_DAYS) columns[column].events.push(event);
+    if (column < days) columns[column].events.push(event);
   }
   return columns;
 }
 
 /** Bars for the spanning events, each in the first lane where it overlaps nothing already placed. */
-export function weekLanes(events: readonly CalendarEvent[], now: number, formats: Formats): Lane[] {
+export function weekLanes(events: readonly CalendarEvent[], now: number, formats: Formats, days = WEEK_DAYS): Lane[] {
   const today = formats.dayNumber(now);
   const lanes: Lane[] = [];
   for (const event of events) {
     if (!isSpanning(event, formats)) continue;
     const { first, last } = eventDays(event, formats);
     const from = Math.max(first, today) - today;
-    const to = Math.min(last - today, WEEK_DAYS - 1);
+    const to = Math.min(last - today, days - 1);
     if (to < from) continue;
     let row = 0;
     while (lanes.some((lane) => lane.row === row && lane.from <= to && from <= lane.to)) row += 1;
