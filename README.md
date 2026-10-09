@@ -98,19 +98,21 @@ Set `SLACK_SONGS_REPLY=1` to have the bot answer in the request's thread ("Queue
 
 ## Bot commands
 
-Mention the Slack bot in the songs channel with one of these words:
+Mention the Slack bot in the songs channel with one of these words. The person who said it gets a private answer ("Volume 20 (it was 45).").
 
 | Command | What it does |
 | --- | --- |
-| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and, across the whole width under it, the week's events (the chart takes the whole stage when there are none). Spotify on this Mac is paused if it was playing. |
-| `@spotbot-reader unfocus` (or `focus off`) | Back to the full screen. The music starts again if focus mode paused it. |
+| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and, across the whole width under it, the week's events (the chart takes the whole stage when there are none). The music keeps playing. If Spotify is playing, the answer has three buttons: dim it to volume 10, pause it, or keep it as it is. |
+| `@spotbot-reader unfocus` (or `focus off`) | Back to the full screen. A dim or pause picked for focus mode is undone. |
+| `@spotbot-reader dim` | Spotify to volume 10, the same as the Dim button. |
 | `@spotbot-reader pause` (or `stop`) | Pauses Spotify. |
 | `@spotbot-reader play` (or `resume`) | Starts Spotify again. |
+| `@spotbot-reader volume 20` | Sets Spotify's volume (0 to 100). `louder`, `quieter`, `turn it down`, `decrease volume` and the like move it by 15 (`lib/volume-request.ts`). |
 | `@spotbot-reader jam` | Shows the Jam QR for a minute (see "Jam QR"). |
 | `@spotbot-reader spotlight <link> <who>` | Puts a story about the club or someone in it in the feed column's spotlight for three days (see "Club in the news"). `<who>` is optional, e.g. `Nicholas Chua`. |
 | `@spotbot-reader spotlight off` | Takes every shared story down again. |
 
-Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause or play said during focus mode wins: unfocus then leaves the music as it is. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands arrive through the Slack listener with a five-second fallback poll, and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
+Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause, play or volume said during focus mode wins: unfocus then leaves the music as it is. The focus buttons are answered by the Slack agent (`agent/slack.ts`), so they need it running and Interactivity turned on for the Slack app (api.slack.com/apps > Interactivity & Shortcuts; in Socket Mode there is no request URL to fill in). Without either, `@spotbot-reader dim` and `@spotbot-reader pause` do the same. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands arrive through the Slack listener with a five-second fallback poll, and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
 
 ## Jam QR
 

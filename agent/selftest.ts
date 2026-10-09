@@ -103,6 +103,11 @@ async function main() {
     assert.deepEqual(parseRule("volume 40"), { kind: "playback", action: "volume_set", volume: 40 });
     assert.deepEqual(parseRule("set the volume to 75%"), { kind: "playback", action: "volume_set", volume: 75 });
     assert.deepEqual(parseRule("volume 250"), { kind: "playback", action: "volume_set", volume: 100 });
+    assert.deepEqual(parseRule("decrease volume"), { kind: "playback", action: "volume_down" });
+    assert.deepEqual(parseRule("lower the music please"), { kind: "playback", action: "volume_down" });
+    assert.deepEqual(parseRule("make it louder!"), { kind: "playback", action: "volume_up" });
+    assert.equal(parseRule("how do I make it quieter"), null);
+    assert.equal(parseRule("why is the volume 20?"), null);
   });
 
   await test("parseRule: queue and preset", () => {
@@ -639,6 +644,21 @@ async function slackFeedTests() {
     assert.equal(songsChannelOwns({ channel: "COTHER", ts: "1.1", text: link }, "CSONGS"), false);
     assert.equal(songsChannelOwns({ channel: "CSONGS", ts: "1.2", thread_ts: "1.1", text: link }, "CSONGS"), false);
     assert.equal(songsChannelOwns({ channel: "CSONGS", ts: "1.1", text: link }, ""), false);
+  });
+
+  await test("feeds: songs channel commands (focus, volume, dim) are the songs poller's too", async () => {
+    const { focusMusicChoice } = await import("./slack");
+    const owns = (text: string) => songsChannelOwns({ channel: "CSONGS", ts: "1.1", text }, "CSONGS", "UBOT");
+    assert.equal(owns("<@UBOT> volume 20"), true);
+    assert.equal(owns("<@UBOT> decrease volume"), true);
+    assert.equal(owns("<@UBOT> focus"), true);
+    assert.equal(owns("<@UBOT> dim"), true);
+    assert.equal(owns("<@UBOT> how do I make it quieter"), false);
+    assert.equal(songsChannelOwns({ channel: "COTHER", ts: "1.1", text: "<@UBOT> volume 20" }, "CSONGS", "UBOT"), false);
+    assert.equal(focusMusicChoice("focus_music:dim"), "dim");
+    assert.equal(focusMusicChoice("focus_music:keep"), "keep");
+    assert.equal(focusMusicChoice("focus_music:louder"), null);
+    assert.equal(focusMusicChoice("mafia:vote"), null);
   });
 
   await test("nudge route: loopback + x-screen-secret only; marks the feed and the listener", async () => {
