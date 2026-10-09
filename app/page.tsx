@@ -14,6 +14,8 @@ import { Overlays } from "./Overlay";
 import { ScreenPushes, asksForFocus, pushedPieces, useScreenState } from "./ScreenPushes";
 import { RecentSpots, SpotTakeover, useSpotAlerts } from "./SpotAlert";
 
+/** Days on the events band while it shares the bottom with the right column; focus mode gives it the width for a week. */
+const BAND_DAYS = 5;
 /** How often the page asks whether focus mode is on (switched from Slack, lib/commands.ts). */
 const FOCUS_POLL_MS = 4_000;
 /** How long each slide of the carousel stays up. */
@@ -306,6 +308,25 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", fit);
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    let timer: number;
+    const show = () => {
+      root.removeAttribute("data-cursor-idle");
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => root.setAttribute("data-cursor-idle", ""), 2_000);
+    };
+    show();
+    window.addEventListener("pointermove", show, true);
+    window.addEventListener("pointerdown", show, true);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointermove", show, true);
+      window.removeEventListener("pointerdown", show, true);
+      root.removeAttribute("data-cursor-idle");
+    };
+  }, []);
+
   return (
     <MarketsProvider>
       <main className={`dashboard ${focus ? "is-focus" : ""} ${staged ? "is-stage" : ""}`}>
@@ -329,7 +350,7 @@ export default function Dashboard() {
           </div>
         )}
         <section className={`events-band ${hasEvents ? "is-open" : ""}`} aria-hidden={!hasEvents} aria-label="This week's events">
-          <Events quietWhenEmpty onState={({ count }) => setHasEvents(count > 0)} />
+          <Events quietWhenEmpty days={focus ? undefined : BAND_DAYS} onState={({ count }) => setHasEvents(count > 0)} />
         </section>
         <StagePanel state={stage} />
         <Overlays overlays={screen?.overlays ?? []} />

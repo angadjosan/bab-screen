@@ -37,6 +37,20 @@ p {
   margin: 0;
 }
 
+html[data-cursor-idle],
+html[data-cursor-idle] * {
+  cursor: none !important;
+}
+
+/* Hide the cursor over embedded and sandboxed surfaces too. Pointer movement removes this overlay. */
+html[data-cursor-idle] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  cursor: none;
+}
+
 /* Fixed 1920x1080 stage, scaled to the window by --fit (set in page.tsx). */
 .dashboard {
   position: fixed;
@@ -54,7 +68,7 @@ p {
   padding: var(--bab-row);
   display: grid;
   grid-template-columns: 432px minmax(0, 1fr) 496px;
-  /* The masthead, a gap, the main row, and the week's events along the bottom under the chart and the carousel.
+  /* The masthead, a gap, the main row, and the week's events along the bottom under the chart.
      The gaps are tracks of their own, so the band can open from nothing (no events) without a gap left behind. */
   --band-gap: 0px;
   --band-height: 0px;
@@ -112,9 +126,11 @@ p {
   right: -22px;
 }
 
-/* Between the chart and the carousel; it ends at the rule over the events band, or at the frame. */
+/* Between the chart and the right column. The column runs down past the events band, so the rule goes on to the
+   frame whether the band is open or not. */
 .featured-slot::after {
   right: -22px;
+  bottom: calc(-21px - var(--band-gap) - var(--band-height));
 }
 
 .events-band::before {
@@ -380,10 +396,11 @@ p {
   font-size: 28px;
 }
 
-/* Right column: what Spotify is playing, and the carousel of quotes and chumming photos in the height that is left. */
+/* Right column: what Spotify is playing, and the carousel of quotes and chumming photos in the height that is left.
+   It runs down to the frame; the events band stops at it. */
 .side-slot {
   grid-column: 3;
-  grid-row: 3;
+  grid-row: 3 / 6;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -391,9 +408,9 @@ p {
   gap: 24px;
 }
 
-/* The week's events (app/Events.tsx), under the chart and the carousel. Closed it takes no height (see .dashboard). */
+/* The week's events (app/Events.tsx), under the chart. Closed it takes no height (see .dashboard). */
 .events-band {
-  grid-column: 2 / 4;
+  grid-column: 2;
   grid-row: 5;
   min-width: 0;
   min-height: 0;
@@ -816,4 +833,3 @@ p {
   z-index: 3;
   align-self: start;
 }
-

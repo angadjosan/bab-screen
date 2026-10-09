@@ -82,7 +82,7 @@ Setup:
 2. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the Web API enabled and the redirect URI `http://127.0.0.1:3000/api/spotify/callback` (Spotify rejects `localhost`). New apps are in Development Mode: the app only works while its owner has Spotify Premium, and any other account that will log in (the one playing on this Mac, if it is not the owner) must be added by name and Spotify email under the app's Users Management tab (five users at most). Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env.local`.
 3. Open http://127.0.0.1:3000/api/spotify/login once on this Mac, signed in to Spotify as the account that plays on this Mac, and approve. The refresh token is stored in `.data/spotify.json` (mode 600, gitignored).
 4. Start something playing in the Spotify app on this Mac.
-5. Open http://127.0.0.1:3000/api/songs/sync once after each server start; that starts the 20-second poll (the Slack agent does this by itself every 5 minutes). While the agent's Slack listener is up, each new message is read within a couple of seconds instead and the poll only runs every 5 minutes as a safety net (see "Slack events"). The same URL returns a JSON status: what is missing, who posted which link, and what happened to it. `/api/songs/status` shows the same without contacting Slack or Spotify.
+5. The server starts a five-second fallback poll automatically, including after an internal Next.js restart. The agent's Slack listener also nudges the server as soon as a message arrives (see "Slack events"). Open http://127.0.0.1:3000/api/songs/sync to run a check immediately. `/api/songs/status` shows the same state without contacting Slack or Spotify.
 
 `SPOTIFY_SONGS_MODE` chooses where songs go:
 
@@ -92,7 +92,7 @@ Setup:
 
 If a link does not show up in the queue, read `spotify.problem`, `spotify.help`, `pending` and `recent` in the status JSON: `no_active_device` means nothing is playing, `premium_required` means Spotify refused the account, `insufficient_scope` or `login_expired` means open the login URL again, and `unknown_track` on a request means the link's track ID does not exist.
 
-Spotify has no API for Jams, so the server cannot start one, keep one alive or find out its link. A Jam started by hand in the Spotify app shares that account's queue, so `queue` or `both` mode feeds it, and the server can show a QR code of the Jam's invite link once it has been given that link (see "Jam QR" below).
+Spotify has no public API for Jams. A small local Spicetify extension uses Spotify Desktop's internal API to create or reuse the current Jam and sends only its fresh invite to the dashboard (see "Jam QR" below).
 
 Set `SLACK_SONGS_REPLY=1` to have the bot answer in the request's thread ("Queued: ..."); it is off by default. `SONGS_MAX_AGE_MINUTES` and `SONGS_POLL_SECONDS` (0 turns the poll off) are optional.
 
@@ -110,31 +110,30 @@ Mention the Slack bot in the songs channel with one of these words:
 | `@spotbot-reader spotlight <link> <who>` | Puts a story about the club or someone in it in the feed column's spotlight for three days (see "Club in the news"). `<who>` is optional, e.g. `Nicholas Chua`. |
 | `@spotbot-reader spotlight off` | Takes every shared story down again. |
 
-Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause or play said during focus mode wins: unfocus then leaves the music as it is. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands are read by the same 20-second poll as song requests (so `/api/songs/sync` must have been opened since the server started), and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
+Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause or play said during focus mode wins: unfocus then leaves the music as it is. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands arrive through the Slack listener with a five-second fallback poll, and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
 
 ## Jam QR
 
-When someone mentions the Slack bot in the songs channel with the word "jam" (`@bot jam`), the now-playing tile shows a QR code of the Spotify Jam's invite link for one minute, then goes back to the song. People scan it, join the Jam and add songs from their phones. Saying it again shows it again for another minute.
+When someone mentions the Slack bot in the songs channel with the word "jam" (`@bot jam`), the Spicetify extension in Spotify Desktop creates or reuses the current Jam and retrieves a fresh invite. The now-playing tile shows its QR for one minute, then returns to the song. The requester also receives a private ephemeral Slack message with the clickable invite or the reason creation failed.
 
-1. Start a Jam by hand in the Spotify app, on the Premium account that plays on this Mac, and copy its invite link from the Jam's share options.
-2. Give the server the link, either way:
-   - in Slack: `@bot jam <link>`, which stores the link in `.data/jam.json` and shows the QR;
-   - in `.env.local`: `SPOTIFY_JAM_URL=<link>`, used when no link has been given in Slack. A link given in Slack wins over the env var; delete `.data/jam.json` to go back to it.
-3. From then on `@bot jam` is enough.
+1. Install Spicetify (`brew install spicetify-cli`) and set `spotify_path` to `/Applications/Spotify.app/Contents/Resources`.
+2. Run `node scripts/install-jam-extension.mjs`. This registers `bab-jam.js` and generates a private key in `.data/jam-bridge.json`; neither the key nor Spotify credentials are committed.
+3. Run `spicetify -n backup apply` on a fresh installation, or `spicetify -n apply` with an existing backup, then `spicetify spotify-updates block`. Restart Spotify and keep a Premium account logged in.
+4. Restart the dev server and send `@bot jam` in the songs channel.
 
-Spotify makes a new invite link whenever a Jam is started, so after restarting the Jam the link must be set again; until then the QR leads to the Jam that has ended. The server cannot tell whether a link still works.
+The authenticated bridge at `http://127.0.0.1:3000/api/jam/bridge` carries only a request ID, the invite URL or an error. Spotify's access token stays inside Spotify. `/api/songs/status` reports bridge health and the last Jam error. Manual `@bot jam <link>` remains available, and `SPOTIFY_JAM_URL` is retained as a legacy fallback; a bare command always requests a fresh invite and never reuses the old link.
 
 Accepted links are `https://open.spotify.com/socialsession/...`, `https://spotify.link/...` and `https://spotify.app.link/...`. Nothing else is ever put in the QR. If the bot is asked before any link is known, the tile says how to set one for that minute instead.
 
-The trigger is a message typed by a person in `SLACK_SONGS_CHANNEL_ID` (not a bot message, a join notice or a thread reply) that contains a mention of the bot and "jam" as a whole word, in any case ("jammed" and "jams" do not count, and neither does "jam" inside a link). It is read by the same poll as song requests, so the 20-second poll must be running (step 5 under "Song requests") and the QR appears up to about 25 seconds after the message: up to 20 for the poll, up to 4 more for the page. With the Slack agent's listener up it is a few seconds. The minute starts when the server reads the message. A message that asks for the Jam is never treated as a song request as well, whatever links it contains. A request posted more than 2 minutes before the server read it (the server was off) does not put the QR up, but a link in it is still stored. The bot finds its own user ID with Slack's `auth.test`, which needs no extra scope.
+The trigger is a message typed by a person in `SLACK_SONGS_CHANNEL_ID` (not a bot message, a join notice or a thread reply) that contains a mention of the bot and "jam" as a whole word, in any case ("jammed" and "jams" do not count, and neither does "jam" inside a link). Socket Mode normally delivers it within a couple of seconds; the fallback poll runs every five seconds. Spotify invite creation and the page's four-second poll add a little more time. The minute starts after the fresh invite arrives. A request posted more than two minutes before the server reads it does not create a Jam or show a QR, though a manually supplied link is still stored.
 
-For that minute the tile grows from 120px to 300px, because at 120px the code is too small to scan from across a room. If the calendar block is showing, it steps aside for the minute; otherwise the carousel below gives up the difference. At 300px each module of a typical invite link is 7 to 9 whole screen pixels (about 5 mm on a 55-inch TV), black on white with a white margin. `/api/songs/status` shows the current link under `jam` (`source` is `slack` or `env`), and `/api/now-playing` carries `jam` while the QR is up.
+For that minute the tile grows from 120px to 300px, because at 120px the code is too small to scan from across a room. If the calendar block is showing, it steps aside for the minute; otherwise the carousel below gives up the difference. At 300px each module of a typical invite link is 7 to 9 whole screen pixels (about 5 mm on a 55-inch TV), black on white with a white margin. `/api/songs/status` shows the current link and bridge health under `jam`, and `/api/now-playing` carries `jam` while the QR is up.
 
 ## Slack events
 
 With `SLACK_APP_TOKEN` set and the Slack agent running, the agent's Socket Mode listener sees every message in the spots, chumming, quotes and songs channels as it is posted (`agent/feeds.ts`). It does not read or store anything for those tiles itself: it sends the Next app a nudge, `POST /api/slack/nudge` with `{"feed": "spots" | "chum" | "quotes" | "songs", "ts"?: "<message ts>"}`, and the Next app re-reads that channel as it always does. So the Next process stays the only writer of `.data/songs.json` and `.data/quotes.json`, and a song request goes through the same lock and cursor whether the nudge or the poll reads it first: it is queued once. A nudge is sent about 1.5 seconds after a message (a burst is one nudge) and at most every 5 seconds per channel. Thread replies are ignored, as the tiles ignore them; edits and deletes nudge the spots, chumming and quotes tiles.
 
-The agent also sends `{"feed": "listener"}` every minute. For 3 minutes after a nudge or a heartbeat the Next app counts the listener as up (`loop.slackListener` in `/api/songs/status`) and its own polls slow to a safety net: spots and chumming photos every 10 minutes, quotes every 6 hours, songs every 5 minutes (every 20 seconds while a request waits, for playback to start say). Without `SLACK_APP_TOKEN`, with the agent stopped, in `JARVIS_DRY_RUN=1`, or without `SCREEN_SECRET`, no nudge arrives and everything polls as described above.
+The agent also sends `{"feed": "listener"}` every minute. For 3 minutes after a nudge or heartbeat the Next app counts the listener as up (`loop.slackListener` in `/api/songs/status`). Songs and commands are still polled every five seconds; the other feeds use slower safety intervals. Without `SLACK_APP_TOKEN`, with the agent stopped, in `JARVIS_DRY_RUN=1`, or without `SCREEN_SECRET`, no nudge arrives and polling continues.
 
 The route takes the same guard as `POST /api/screen`: only from this machine, with `x-screen-secret` equal to `SCREEN_SECRET` (401 wrong secret, 403 not local or no secret set). A mention of the bot in the songs channel with a track link or "jam" is left to the songs poll rather than also run as a request to the agent, so it is not queued twice.
 
@@ -225,7 +224,7 @@ What is shown: events that have not ended and start within the next 7 days, from
 
 ## Coin flip
 
-Two people send the same amount of USDC on Base to the wallet in the QR code under the news feed, the screen flips a coin, and the winner is sent both stakes. It is off until `BAB_PRIVATE_KEY` is set in `.env.local`; with it empty the tile is not shown and the feed has the whole column.
+Two people send matching amounts of USDC on Base to the wallet in the QR code under the news feed, the screen flips a coin, and the winner is sent both stakes. Amounts within $0.05 count as a match and the full combined pot is paid. It is off until `BAB_PRIVATE_KEY` is set in `.env.local`; with it empty the tile is not shown and the feed has the whole column.
 
 Setup:
 
@@ -236,7 +235,7 @@ Setup:
 Rules (`lib/coin-flip.ts`):
 
 - The first deposit of $1 or more is the open stake, shown on the tile with its amount. There is no upper limit, so the wallet holds whatever is staked until it is matched or refunded. It is refunded if nobody matches it within 10 minutes.
-- The next deposit of exactly the same amount makes a game: the first depositor is heads, the second tails, and the server picks the winner at random (`crypto.randomInt`). The winner is sent the whole pot about 17 seconds later, once the coin has landed on screen. Nothing is kept.
+- The next deposit within $0.05 makes a game: the first depositor is heads, the second tails, and the server picks the winner at random (`crypto.randomInt`). The winner is sent the exact combined pot about 17 seconds later, once the coin has landed on screen. Nothing is kept.
 - A deposit of any other amount while a stake is open, or under $1, is refunded. Under $0.10 is ignored.
 - Money always goes back to the address it came from, so players must send from a wallet they control. A withdrawal sent straight from an exchange would be paid to the exchange's address.
 
