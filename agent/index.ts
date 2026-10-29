@@ -1,6 +1,6 @@
 // B@B Jarvis: the long-running agent on the Mac mini (`npm run jarvis`, or launchd's com.bab.jarvis).
 // Starts the local HTTP endpoint (voice, /health, /speaking), the Slack Socket Mode listener, the
-// Slack nudges for the wall's tiles (agent/feeds.ts), the scheduler (busy threads, songs loop) and
+// Slack nudges for the wall's tiles (agent/feeds.ts), the scheduler (busy threads, songs loop), the TV watchdog (agent/tv.ts) and
 // games (agent/games: a saved Mafia game picks up where it was).
 // Kept out of the Next process on purpose.
 // Everything missing is logged and switched off; nothing missing stops the agent from starting.
@@ -15,6 +15,7 @@ import { startHttp } from "./http";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { startSlack, stopSlack } from "./slack";
 import { stopSpeaking } from "./speech";
+import { startTvWatch, stopTvWatch } from "./tv";
 
 let server: Server | null = null;
 let shuttingDown = false;
@@ -37,6 +38,7 @@ async function main() {
   await startSlack();
   startFeeds();
   startScheduler();
+  startTvWatch();
   await startGames();
   console.log(`[jarvis] Ready. Model ${config.fireworksKey() ? config.model() : "(none: rules only)"}, daily cap $${config.dailyCap()}.`);
 }
@@ -48,6 +50,7 @@ async function shutdown(signal: string) {
   const force = setTimeout(() => process.exit(1), 8_000);
   force.unref();
   stopScheduler();
+  stopTvWatch();
   stopFeeds();
   stopGames();
   await Promise.allSettled([

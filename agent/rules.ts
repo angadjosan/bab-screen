@@ -7,6 +7,7 @@ import { playback, queueTrack, type PlaybackAction } from "./music";
 import { addCheckin, addMemory, appendMemberField, findMemories, getMember, logEvent } from "./db";
 import type { TurnContext } from "./tools/types";
 import { parseGameCommand, runGameCommand, type GameCommand } from "./games";
+import { tv, type TvAction } from "./tv";
 
 export type Rule =
   | { kind: "queue"; query: string }
@@ -14,7 +15,8 @@ export type Rule =
   | { kind: "preset"; preset: Preset }
   | { kind: "checkin"; status: "in" | "out" }
   | { kind: "interests"; items: string[] }
-  | { kind: "game"; command: GameCommand };
+  | { kind: "game"; command: GameCommand }
+  | { kind: "tv"; action: TvAction };
 
 /**
  * "my interests: zk, MEV, F1", "my interests are zk and F1", "interests: ...": the list, each item
@@ -45,6 +47,13 @@ const PLAYBACK: Array<[RegExp, Exclude<PlaybackAction, "status" | "volume_set">]
   [/^(?:play|resume|unpause|play (?:it|the music|music)|resume (?:the )?music|start (?:the )?music)$/, "play"],
   [/^(?:volume up|louder|turn it up|turn (?:the )?music up|turn up (?:the )?(?:music|volume)|crank it|pump it up)$/, "volume_up"],
   [/^(?:volume down|quieter|softer|turn it down|turn (?:the )?music down|turn down (?:the )?(?:music|volume))$/, "volume_down"],
+];
+
+// "on", "off", "status" on their own (tag the bot with just the word), or with "tv" in them.
+const TV: Array<[RegExp, TvAction]> = [
+  [/^(?:on|tv on|turn (?:the )?tv on|turn on (?:the )?tv)$/, "on"],
+  [/^(?:off|tv off|turn (?:the )?tv off|turn off (?:the )?tv)$/, "off"],
+  [/^(?:status|tv status|is (?:the )?tv on)$/, "status"],
 ];
 
 function parsePreset(text: string): Rule | null {
@@ -92,6 +101,7 @@ export function parseRule(input: string): Rule | null {
   if (!text) return null;
 
   for (const [pattern, action] of PLAYBACK) if (pattern.test(text)) return { kind: "playback", action };
+  for (const [pattern, action] of TV) if (pattern.test(text)) return { kind: "tv", action };
 
   const volume = text.match(/^(?:set (?:the )?)?volume (?:to |at )?(\d{1,3})\s*%?$/);
   if (volume) return { kind: "playback", action: "volume_set", volume: Math.min(100, Number(volume[1])) };
@@ -134,6 +144,10 @@ async function ruleOutcome(rule: Rule, ctx: TurnContext): Promise<Outcome> {
     }
     case "playback": {
       const result = await playback(rule.action, { volume: rule.volume, dryRun: ctx.dryRun });
+      return { ok: result.ok, reply: result.message };
+    }
+    case "tv": {
+      const result = await tv(rule.action, { dryRun: ctx.dryRun });
       return { ok: result.ok, reply: result.message };
     }
     case "preset":
