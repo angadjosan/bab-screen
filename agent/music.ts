@@ -7,13 +7,12 @@ import { execFile } from "node:child_process";
 import { isDucked, restoreVolume, setRestoreVolume } from "../lib/duck";
 import { getNowPlaying } from "../lib/now-playing";
 import type { Track } from "../lib/spotify";
+import { VOLUME_STEP } from "../lib/volume-request";
 import { config } from "./config";
 
 export type PlaybackAction = "play" | "pause" | "next" | "previous" | "volume_up" | "volume_down" | "volume_set" | "status";
 
 export type MusicResult = { ok: boolean; message: string; detail?: unknown };
-
-const VOLUME_STEP = 15;
 
 function osascript(script: string): Promise<{ ok: boolean; out: string; permission: boolean }> {
   return new Promise((resolve) => {

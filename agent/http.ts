@@ -1,40 +1,19 @@
 // The agent's local endpoint, 127.0.0.1 only:
-//   POST /voice {"text": "..."}  runs a turn and speaks the answer; replies {reply, path, toolCalls}
-//   GET  /speaking               {"speaking": boolean}: whether a line is still being said in the room
 //   GET  /health                 what is configured, connected and spent
+// Voice in the room is Worm's, in the Next app (lib/stage/ears.ts); the agent takes no spoken requests.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { config, missingConfig } from "./config";
 import { spentToday } from "./db";
 import { chatClient, overCap } from "./llm";
 import { slackStatus } from "./slack";
-import { isSpeaking, speak } from "./speech";
-import { runTurn } from "./turn";
+import { isSpeaking } from "./speech";
 
-const MAX_BODY = 16 * 1024;
 const startedAt = Date.now();
 
 function send(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   response.end(JSON.stringify(body));
-}
-
-function readBody(request: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_BODY) {
-        reject(new Error("too_large"));
-        request.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    request.on("error", reject);
-  });
 }
 
 export function health() {
@@ -58,21 +37,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   if (request.headers.origin) return send(response, 403, { error: "forbidden" });
 
   if (request.method === "GET" && url.pathname === "/health") return send(response, 200, health());
-  if (request.method === "GET" && url.pathname === "/speaking") return send(response, 200, { speaking: isSpeaking() });
-
-  if (request.method === "POST" && url.pathname === "/voice") {
-    let text = "";
-    try {
-      const body = JSON.parse(await readBody(request)) as { text?: unknown };
-      text = typeof body.text === "string" ? body.text.trim() : "";
-    } catch {
-      return send(response, 400, { error: "body must be JSON {\"text\": \"...\"}" });
-    }
-    if (!text) return send(response, 400, { error: "text is required" });
-    const result = await runTurn({ text, source: "voice", userName: null });
-    if (result.reply && !result.alreadySpoken) void speak(result.reply);
-    return send(response, 200, { reply: result.reply, path: result.path, toolCalls: result.toolCalls, ...(result.dryRunLog.length ? { dryRunLog: result.dryRunLog } : {}) });
-  }
 
   send(response, 404, { error: "not found" });
 }

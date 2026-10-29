@@ -2,7 +2,7 @@
 // them to the playback queue (default) and/or a playlist of the connected Spotify account.
 // Messages without a track link are ignored. A message that mentions the bot with the word "jam"
 // is not a song request: it puts the Jam QR on the screen for a minute (lib/jam.ts). One with "focus",
-// "unfocus", "pause" or "play" is a command (lib/commands.ts).
+// "unfocus", "pause", "play", "dim" or a volume is a command (lib/commands.ts).
 //
 // syncSongs() is the single entry point. It is idempotent (a persisted cursor means a message is
 // only ever handled once, across restarts too), safe to call concurrently, and never throws.
@@ -318,12 +318,12 @@ class SlackError extends Error {
   }
 }
 
-async function slackCall<T>(method: string, params: Record<string, string>, post = false): Promise<T> {
+async function slackCall<T>(method: string, params: Record<string, unknown>, post = false): Promise<T> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) throw new SlackError("token_missing");
 
   const url = new URL(`https://slack.com/api/${method}`);
-  if (!post) for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  if (!post) for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
 
   const response = await sendSlackRequest(url, token, params, post);
   if (response.status === 429) throw new SlackError("rate_limited", null, retryAfterMs(response));
@@ -334,7 +334,7 @@ async function slackCall<T>(method: string, params: Record<string, string>, post
   return payload;
 }
 
-async function sendSlackRequest(url: URL, token: string, params: Record<string, string>, post: boolean): Promise<Response> {
+async function sendSlackRequest(url: URL, token: string, params: Record<string, unknown>, post: boolean): Promise<Response> {
   try {
     return await fetch(url, slackRequestInit(token, params, post));
   } catch (error) {
@@ -343,7 +343,7 @@ async function sendSlackRequest(url: URL, token: string, params: Record<string, 
   }
 }
 
-function slackRequestInit(token: string, params: Record<string, string>, post: boolean): RequestInit {
+function slackRequestInit(token: string, params: Record<string, unknown>, post: boolean): RequestInit {
   return {
     method: post ? "POST" : "GET",
     headers: post
@@ -487,7 +487,8 @@ async function handleMessage(state: SongsState, message: SlackMessage & { ts: st
   state.cursor = message.ts;
   if (!isCandidate(message)) return;
   if (command) {
-    await runCommand(command, message.user);
+    const reply = await runCommand(command, message.user);
+    if (reply) await replyEphemeral(message.user, reply.text, reply.blocks);
     return;
   }
   if (jam) {
@@ -564,15 +565,15 @@ function recordSlackFailure(error: unknown): void {
   runtime.slackRetryAt = Date.now() + Math.max(SLACK_ERROR_BACKOFF_MS, slackError.retryAfterMs ?? 0);
 }
 
-/** Jam results are private to the requester and do not depend on song-request thread replies. */
-async function replyEphemeral(user: string, text: string): Promise<boolean> {
+/** Jam results and command answers are private to the requester and do not depend on song-request thread replies. */
+async function replyEphemeral(user: string, text: string, blocks?: unknown[]): Promise<boolean> {
   const channel = songsChannel();
   if (!channel) return false;
   try {
-    await slackCall("chat.postEphemeral", { channel, user, text }, true);
+    await slackCall("chat.postEphemeral", { channel, user, text, ...(blocks ? { blocks } : {}) }, true);
     return true;
   } catch (error) {
-    console.error("Jam private reply failed:", error instanceof SlackError ? error.code : "unknown");
+    console.error("Private reply failed:", error instanceof SlackError ? error.code : "unknown");
     return false;
   }
 }

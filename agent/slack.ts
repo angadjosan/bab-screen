@@ -1,9 +1,10 @@
 // The Slack listener: @slack/bolt in Socket Mode (no public URL). @mentions and DMs run a turn and
-// get the answer in a thread. Every channel message (message.channels) also goes to the handlers
+// get the answer in a thread. Button clicks on the focus mode question are answered here too. Every channel message (message.channels) also goes to the handlers
 // registered with onChannelMessage(): the scheduler's busy-thread watcher, and agent/feeds.ts, which
 // nudges the Next app to re-read the spots, chumming, quotes and songs channels when they change.
 
 import { App, LogLevel } from "@slack/bolt";
+import { FOCUS_MUSIC_ACTION, FOCUS_MUSIC_CHOICES, chooseFocusMusic, looksLikeCommand, parseCommand, type FocusMusicChoice } from "../lib/commands";
 import { looksLikeJamTrigger } from "../lib/jam";
 import { resolveUserName } from "../lib/slack-users";
 import { findTrackLinks } from "../lib/spotify";
@@ -53,13 +54,26 @@ let connected = false;
 export const slackStatus = () => ({ listening: connected, botUserId });
 
 /**
- * A mention in the songs channel with a track link or "jam" is the Next app's (lib/songs.ts reads it
- * from the channel and queues it, or shows the Jam QR). Running a turn as well would queue it twice.
+ * A mention in the songs channel with a track link, "jam" or a command (focus, pause, volume 20, ...) is
+ * the Next app's: lib/songs.ts reads it from the channel and queues it, shows the Jam QR, or runs the
+ * command (lib/commands.ts). Running a turn as well would do it twice.
  */
-export function songsChannelOwns(event: { channel: string; text?: string; thread_ts?: string; ts?: string }, songsChannel = config.songsChannel()): boolean {
+export function songsChannelOwns(
+  event: { channel: string; text?: string; thread_ts?: string; ts?: string },
+  songsChannel = config.songsChannel(),
+  bot = botUserId,
+): boolean {
   if (!songsChannel || event.channel !== songsChannel || !event.text) return false;
   if (event.thread_ts && event.thread_ts !== event.ts) return false; // thread replies are not song requests
-  return findTrackLinks(event.text).length > 0 || looksLikeJamTrigger(event.text);
+  if (findTrackLinks(event.text).length > 0 || looksLikeJamTrigger(event.text)) return true;
+  return looksLikeCommand(event.text) && parseCommand(event.text, bot) !== null;
+}
+
+/** "focus_music:dim" → "dim"; null for any other action. */
+export function focusMusicChoice(actionId: string): FocusMusicChoice | null {
+  if (!actionId.startsWith(FOCUS_MUSIC_ACTION)) return null;
+  const choice = actionId.slice(FOCUS_MUSIC_ACTION.length);
+  return (FOCUS_MUSIC_CHOICES as readonly string[]).includes(choice) ? (choice as FocusMusicChoice) : null;
 }
 
 async function handleRequest(event: { user?: string; text?: string; channel: string; ts: string; thread_ts?: string }, place: "dm" | "channel") {
@@ -126,6 +140,15 @@ export async function startSlack(): Promise<boolean> {
     }
     // Channel messages: requests arrive as app_mention, so here they are only routed to handlers.
     await dispatch(incoming);
+  });
+
+  // The buttons under "Focus mode is on. What should the music do?" (lib/commands.ts). Slack only sends
+  // these when Interactivity is turned on for the app; in Socket Mode it needs no request URL.
+  app.action(new RegExp(`^${FOCUS_MUSIC_ACTION}`), async ({ ack, action, respond }) => {
+    await ack();
+    const choice = "action_id" in action ? focusMusicChoice(action.action_id) : null;
+    if (!choice) return;
+    await respond({ replace_original: true, text: await chooseFocusMusic(choice) });
   });
 
   app.error(async (error) => {

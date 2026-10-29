@@ -4,7 +4,7 @@
 // .data/quotes.json, so a restart has it at once).
 //
 // GET /api/quotes never waits for Slack: it answers with a random sample of the pool and, when the
-// pool is older than REFRESH_MS, starts a re-read in the background. Only the last 2 years of the
+// pool is older than REFRESH_MS, starts a re-read in the background. Only the last 18 months of the
 // channel are read (QUOTES_MAX_AGE_DAYS), and older quotes are dropped. The whole channel window is
 // re-read each time rather than only what is new, so a quote that was edited or deleted in Slack
 // leaves the screen within the hour.
@@ -76,10 +76,10 @@ const RETRY_MS = 2 * 60_000;
 /** After a read that stopped part-way (rate limit, network), top the pool up this soon. */
 const PARTIAL_RETRY_MS = 10 * 60_000;
 /**
- * Only quotes posted in the last 2 years are read, kept and served. The window rolls: it is
+ * Only quotes posted in the last 18 months are read, kept and served. The window rolls: it is
  * counted back from now every time it is used, so a quote drops out the day it gets too old.
  */
-export const QUOTES_MAX_AGE_DAYS = 730;
+export const QUOTES_MAX_AGE_DAYS = 548;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 10;
 /** Stop paging once this many messages look like quotes; with the pool cap, older ones would be cut anyway. */

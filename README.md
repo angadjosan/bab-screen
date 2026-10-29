@@ -50,7 +50,7 @@ Slack API references: [conversation history and scopes](https://docs.slack.dev/r
 
 `GET /api/quotes` returns a random sample (`?count=`, 40 by default, 100 at most) of the quotes posted in the Slack channel `SLACK_QUOTES_CHANNEL_ID` (the club's quotes channel is `C7CJ73H55`). Invite the bot to that channel (`/invite @bot`); the scopes Spotbot already needs are enough, and nothing is ever posted. Until the bot is a member the response is `"status": "error"` with `"error": "not_in_channel"` and no quotes.
 
-`lib/quotes.ts` reads the messages of the last 2 years only (`QUOTES_MAX_AGE_DAYS`, 730 days counted back from now; at most the newest 2,000 of them), once an hour (every 6 hours while the Slack agent's listener is up, which re-reads about 20 seconds after each post, edit or delete instead; see "Slack events"), and keeps at most 400 quotes in memory and in `.data/quotes.json`; a request never waits for Slack. Slack is not asked for anything older, and a quote that passes 2 years is dropped the next time quotes are requested. Because the whole window is read again each hour, a quote edited or deleted in Slack leaves the screen within the hour. A quote is a top-level message posted by a person: bot messages, join and leave notices, thread replies, messages with a link, a code block or `@channel`, messages with a file that is not an image, and anything over 240 characters are left out. So is the channel talking about a quote: text with no image that has no quotation marks, names nobody and is not a conversation (`this a fake quote`). There is no filter on what a quote says.
+`lib/quotes.ts` reads the messages of the last 18 months only (`QUOTES_MAX_AGE_DAYS`, 548 days counted back from now; at most the newest 2,000 of them), once an hour (every 6 hours while the Slack agent's listener is up, which re-reads about 20 seconds after each post, edit or delete instead; see "Slack events"), and keeps at most 400 quotes in memory and in `.data/quotes.json`; a request never waits for Slack. Slack is not asked for anything older, and a quote that passes 18 months is dropped the next time quotes are requested. Because the whole window is read again each hour, a quote edited or deleted in Slack leaves the screen within the hour. A quote is a top-level message posted by a person: bot messages, join and leave notices, thread replies, messages with a link, a code block or `@channel`, messages with a file that is not an image, and anything over 240 characters are left out. So is the channel talking about a quote: text with no image that has no quotation marks, names nobody and is not a conversation (`this a fake quote`). There is no filter on what a quote says.
 
 Each quote has `text` (plain text: mentions as names, Slack markup and emoji codes removed), `who`, `poster`, `postedAt`, and `imageUrl` when the message has an image, served through the same signed endpoint as Spotbot photos; a message that is only an image is a quote with `text: null`. `who` is the person quoted and is set only when the message names them (`"words" - Name`, `words — @mention`, `Name: words`, a `>` quote with a name or mention on the next line); otherwise it is `null`, and the person who posted the message is never shown as the one who said it. Several `Name: words` lines are kept as a conversation, one line per speaker.
 
@@ -98,19 +98,21 @@ Set `SLACK_SONGS_REPLY=1` to have the bot answer in the request's thread ("Queue
 
 ## Bot commands
 
-Mention the Slack bot in the songs channel with one of these words:
+Mention the Slack bot in the songs channel with one of these words. The person who said it gets a private answer ("Volume 20 (it was 45).").
 
 | Command | What it does |
 | --- | --- |
-| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and, across the whole width under it, the week's events (the chart takes the whole stage when there are none). Spotify on this Mac is paused if it was playing. |
-| `@spotbot-reader unfocus` (or `focus off`) | Back to the full screen. The music starts again if focus mode paused it. |
+| `@spotbot-reader focus` | Focus mode: only the B@B mark, the ticker tape, the featured market and, across the whole width under it, the week's events (the chart takes the whole stage when there are none). The music keeps playing. If Spotify is playing, the answer has three buttons: dim it to volume 10, pause it, or keep it as it is. |
+| `@spotbot-reader unfocus` (or `focus off`) | Back to the full screen. A dim or pause picked for focus mode is undone. |
+| `@spotbot-reader dim` | Spotify to volume 10, the same as the Dim button. |
 | `@spotbot-reader pause` (or `stop`) | Pauses Spotify. |
 | `@spotbot-reader play` (or `resume`) | Starts Spotify again. |
+| `@spotbot-reader volume 20` | Sets Spotify's volume (0 to 100). `louder`, `quieter`, `turn it down`, `decrease volume` and the like move it by 15 (`lib/volume-request.ts`). |
 | `@spotbot-reader jam` | Shows the Jam QR for a minute (see "Jam QR"). |
 | `@spotbot-reader spotlight <link> <who>` | Puts a story about the club or someone in it in the feed column's spotlight for three days (see "Club in the news"). `<who>` is optional, e.g. `Nicholas Chua`. |
 | `@spotbot-reader spotlight off` | Takes every shared story down again. |
 
-Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause or play said during focus mode wins: unfocus then leaves the music as it is. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands arrive through the Slack listener with a five-second fallback poll, and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
+Focus mode stays on until turned off, across restarts (`.data/focus.json`). A pause, play or volume said during focus mode wins: unfocus then leaves the music as it is. The focus buttons are answered by the Slack agent (`agent/slack.ts`), so they need it running and Interactivity turned on for the Slack app (api.slack.com/apps > Interactivity & Shortcuts; in Socket Mode there is no request URL to fill in). Without either, `@spotbot-reader dim` and `@spotbot-reader pause` do the same. A message with a Spotify track link is a song request, not a command, even if it says "play". Commands arrive through the Slack listener with a five-second fallback poll, and the page asks `/api/focus` every 4 seconds. See `lib/commands.ts`.
 
 ## Jam QR
 

@@ -8,6 +8,7 @@ import { addCheckin, addMemory, appendMemberField, findMemories, getMember, logE
 import type { TurnContext } from "./tools/types";
 import { parseGameCommand, runGameCommand, type GameCommand } from "./games";
 import { tv, type TvAction } from "./tv";
+import { parseVolumeRequest } from "../lib/volume-request";
 
 export type Rule =
   | { kind: "queue"; query: string }
@@ -40,13 +41,11 @@ export function normalize(text: string): string {
     .trim();
 }
 
-const PLAYBACK: Array<[RegExp, Exclude<PlaybackAction, "status" | "volume_set">]> = [
+const PLAYBACK: Array<[RegExp, Exclude<PlaybackAction, "status" | "volume_set" | "volume_up" | "volume_down">]> = [
   [/^(?:skip|next|next (?:song|track)|skip (?:it|this|this song|this track|the song|song|track))$/, "next"],
   [/^(?:previous|previous (?:song|track)|last song|go back a song)$/, "previous"],
   [/^(?:pause|stop|pause (?:it|the music|music|spotify)|stop (?:the )?music|stop spotify)$/, "pause"],
   [/^(?:play|resume|unpause|play (?:it|the music|music)|resume (?:the )?music|start (?:the )?music)$/, "play"],
-  [/^(?:volume up|louder|turn it up|turn (?:the )?music up|turn up (?:the )?(?:music|volume)|crank it|pump it up)$/, "volume_up"],
-  [/^(?:volume down|quieter|softer|turn it down|turn (?:the )?music down|turn down (?:the )?(?:music|volume))$/, "volume_down"],
 ];
 
 // "on", "off", "status" on their own (tag the bot with just the word), or with "tv" in them.
@@ -103,8 +102,9 @@ export function parseRule(input: string): Rule | null {
   for (const [pattern, action] of PLAYBACK) if (pattern.test(text)) return { kind: "playback", action };
   for (const [pattern, action] of TV) if (pattern.test(text)) return { kind: "tv", action };
 
-  const volume = text.match(/^(?:set (?:the )?)?volume (?:to |at )?(\d{1,3})\s*%?$/);
-  if (volume) return { kind: "playback", action: "volume_set", volume: Math.min(100, Number(volume[1])) };
+  const volume = parseVolumeRequest(text);
+  if (volume?.kind === "set") return { kind: "playback", action: "volume_set", volume: volume.volume };
+  if (volume) return { kind: "playback", action: volume.direction > 0 ? "volume_up" : "volume_down" };
 
   return parsePreset(text) ?? parseQueue(raw) ?? parseInterests(input, raw) ?? parseCheckin(text) ?? parseGame(raw);
 }
