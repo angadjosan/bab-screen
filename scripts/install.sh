@@ -244,9 +244,10 @@ cat <<EOF
    To re-trigger a missed prompt: tccutil reset Microphone (or AppleEvents),
    then launchctl kickstart -k gui/$UID/com.bab.screen
 
-3. TV power (agent/tv.ts): the Mac's HDMI port has no CEC. Put a Pulse-Eight
-   USB-CEC adapter between the Mac mini and the TV, turn CEC on in the TV's
-   settings, and brew install libcec. Test: echo 'pow 0' | cec-client -s -d 1
+3. TV power (agent/tv.ts): on the Hisense, Settings > Network > turn on Wake on
+   LAN (or Wake on Wi-Fi), and copy its MAC address into JARVIS_TV_MAC in
+   .env.local (and its IP into JARVIS_TV_IP). Allow node Local Network access
+   if macOS asks. Test: tag the bot with "on" while the TV is off.
 
 4. Remote access over Tailscale. Tailscale SSH needs the open-source
    tailscaled (brew install tailscale; sudo brew services start tailscale;

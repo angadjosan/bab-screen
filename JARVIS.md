@@ -78,7 +78,7 @@ LaunchAgents, not LaunchDaemons: Spotify AppleScript, `say`, `afplay` and the mi
 - Both ids live in env (`FIREWORKS_MODEL`, `FIREWORKS_MODEL_HEAVY`).
 - Our own tool loop in `agent/llm.ts`, ~150 lines: send messages + tool schemas, run tool calls, feed results back, stop at N steps.
 - Rules fast path before the LLM: "queue X", "skip", "pause", "volume up", "preset party" run directly, no model call.
-- TV power (`agent/tv.ts`), rules only, never the model: tag the bot with "on", "off" or "status" ("turn on the tv" works too). A watchdog asks the TV for its power state every `JARVIS_TV_WATCH_SECONDS` (60) and turns it on, onto the Mac's input, when it is in standby. "off" holds it off, kept in `.data/tv.json`, until someone says "on". A Mac's HDMI port has no CEC, so this needs a Pulse-Eight USB-CEC adapter between the Mac mini and the TV, and `brew install libcec` for `cec-client`.
+- TV power (`agent/tv.ts`), rules only, never the model: tag the bot with "on", "off" or "status" ("turn on the tv" works too). The TV is a Hisense (VIDAA) on the Mac mini's network; it wakes on a Wake-on-LAN packet to `JARVIS_TV_MAC`. A watchdog sends one every `JARVIS_TV_WATCH_SECONDS` (60), which a TV that is already on ignores. "off" stops the watchdog, kept in `.data/tv.json`, until someone says "on"; the TV itself is turned off with its remote. "status" says whether the TV answers on `JARVIS_TV_IP`.
 - Daily spend cap tracked in SQLite. Over the cap, rules only.
 
 ## Agent

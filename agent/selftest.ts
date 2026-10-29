@@ -119,12 +119,16 @@ async function main() {
     assert.deepEqual(parseRule("is the tv on?"), { kind: "tv", action: "status" });
   });
 
-  await test("tv: parsePower reads cec-client's answer", async () => {
-    const { parsePower } = await import("./tv");
-    assert.equal(parsePower("opening a connection to the CEC adapter...\npower status: standby\n"), "standby");
-    assert.equal(parsePower("power status: on"), "on");
-    assert.equal(parsePower("power status: in transition from standby to on"), "transition");
-    assert.equal(parsePower("autodetect FAILED"), "unknown");
+  await test("tv: the Wake-on-LAN packet", async () => {
+    const { parseMac, magicPacket } = await import("./tv");
+    const mac = parseMac("aa:bb:cc:dd:ee:ff");
+    assert.ok(mac);
+    assert.deepEqual(parseMac("AA-BB-CC-DD-EE-FF"), mac);
+    assert.equal(parseMac("not a mac"), null);
+    const packet = magicPacket(mac);
+    assert.equal(packet.length, 102);
+    assert.equal(packet.subarray(0, 6).toString("hex"), "ffffffffffff");
+    assert.equal(packet.subarray(96).toString("hex"), "aabbccddeeff");
   });
 
   await test("parseRule: queue and preset", () => {

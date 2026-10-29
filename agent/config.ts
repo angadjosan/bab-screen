@@ -39,10 +39,12 @@ export const config = {
   schedulerSeconds: () => number("JARVIS_SCHEDULER_SECONDS", 120),
   pinMinReplies: () => number("JARVIS_PIN_MIN_REPLIES", 5),
   /** Channels a thread may be pinned from: SLACK_CHANNEL_ID plus this comma list (public channels only). */
-  /** Seconds between TV power checks; the TV is turned on when found off. 0 turns the watchdog off. */
+  /** Seconds between wake packets to the TV (agent/tv.ts). 0 turns the watchdog off. */
   tvWatchSeconds: () => number("JARVIS_TV_WATCH_SECONDS", 60),
-  /** Path to libcec's cec-client, when it is not in /opt/homebrew/bin or /usr/local/bin. */
-  cecClient: () => env("JARVIS_CEC_CLIENT"),
+  /** The TV's MAC address, for Wake-on-LAN. */
+  tvMac: () => env("JARVIS_TV_MAC"),
+  /** The TV's IP address: optional, for "status" and a wake packet sent straight to it. */
+  tvIp: () => env("JARVIS_TV_IP"),
   pinChannels: () => [env("SLACK_CHANNEL_ID"), ...env("JARVIS_PIN_CHANNELS").split(",")].map((id) => id.trim()).filter(Boolean),
 };
 

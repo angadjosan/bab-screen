@@ -1,14 +1,18 @@
-// The TV's power over HDMI-CEC. A Mac's own HDMI port does not speak CEC, so this needs a USB-CEC
-// adapter (Pulse-Eight) between the Mac mini and the TV, and libcec's cec-client
-// (`brew install libcec`). Each call opens the adapter, sends one command and closes it.
+// The TV's power over the network: the clubroom TV is a Hisense (VIDAA) on the same network as the
+// Mac mini, and it wakes from standby on a Wake-on-LAN packet. Turn on Wake on LAN (or Wake on
+// Wi-Fi) in the TV's network settings and set JARVIS_TV_MAC to its MAC address (shown in the same
+// settings). JARVIS_TV_IP is optional: with it, "status" says whether the TV answers on the network.
 //
 // - Commands: "on", "off" and "status" (rules fast path, agent/rules.ts).
-// - Watchdog: every JARVIS_TV_WATCH_SECONDS (default 60, 0 off) asks the TV for its power state
-//   and turns it on if it is in standby. "off" holds it off, and the watchdog leaves it alone,
-//   until someone says "on". The hold is kept in .data/tv.json, so a restart does not undo it.
+// - Watchdog: every JARVIS_TV_WATCH_SECONDS (default 60, 0 off) sends a wake packet. A TV that is
+//   already on ignores it, so one that was turned off comes back on within a minute. "off" stops
+//   the watchdog until someone says "on" (the TV itself is turned off with its remote: waking is
+//   the only thing it takes over the network). The hold is kept in .data/tv.json, so a restart
+//   does not undo it.
 
-import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createSocket } from "node:dgram";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { Socket } from "node:net";
 import path from "node:path";
 import { dataDir } from "../lib/songs-store";
 import { config } from "./config";
@@ -17,64 +21,63 @@ export type TvAction = "on" | "off" | "status";
 
 export type TvResult = { ok: boolean; message: string };
 
-// launchd's PATH has no Homebrew in it, so look in its usual places.
-const CEC_CLIENT_PATHS = ["/opt/homebrew/bin/cec-client", "/usr/local/bin/cec-client"];
+const WOL_PORT = 9;
+// AirPlay's port; the TV answers on it while it is awake.
+const PROBE_PORT = 7000;
+const PROBE_TIMEOUT_MS = 2_000;
 
-// Opening the adapter takes a few seconds; a TV waking up can take a few more to answer.
-const CEC_TIMEOUT_MS = 20_000;
+const NO_MAC = "JARVIS_TV_MAC isn't set, so I can't wake the TV.";
 
-function cecClientPath(): string | null {
-  const configured = config.cecClient();
-  if (configured) return existsSync(configured) ? configured : null;
-  return CEC_CLIENT_PATHS.find((file) => existsSync(file)) ?? null;
+/** "AA:BB:CC:DD:EE:FF" (or with - or no separators) as six bytes, or null. */
+export function parseMac(mac: string): Buffer | null {
+  const hex = mac.replace(/[:\-.\s]/g, "");
+  return /^[0-9a-f]{12}$/i.test(hex) ? Buffer.from(hex, "hex") : null;
 }
 
-type CecOutput = { ok: boolean; out: string; noAdapter: boolean };
+/** Six 0xFF bytes, then the MAC sixteen times. */
+export function magicPacket(mac: Buffer): Buffer {
+  return Buffer.concat([Buffer.alloc(6, 0xff), ...Array.from({ length: 16 }, () => mac)]);
+}
 
-// One cec-client at a time: two can't hold the adapter together.
-let queue: Promise<unknown> = Promise.resolve();
-
-/** Sends one cec-client command (`on 0`, `standby 0`, `pow 0`, `as`) in single-command mode. */
-function cec(binary: string, command: string): Promise<CecOutput> {
-  const run = () =>
-    new Promise<CecOutput>((resolve) => {
-      const child = execFile(binary, ["-s", "-d", "1"], { timeout: CEC_TIMEOUT_MS }, (error, stdout, stderr) => {
-        const out = `${String(stdout)}\n${String(stderr)}`;
-        resolve({ ok: !error, out, noAdapter: /autodetect FAILED|unable to open|could not open|no adapter/i.test(out) });
-      });
-      child.stdin?.end(`${command}\n`);
+/** Broadcasts the wake packet, and sends it to JARVIS_TV_IP too when that is set. */
+function wake(mac: Buffer): Promise<boolean> {
+  const packet = magicPacket(mac);
+  const targets = ["255.255.255.255", config.tvIp()].filter(Boolean);
+  return new Promise((resolve) => {
+    const socket = createSocket("udp4");
+    socket.once("error", () => {
+      socket.close();
+      resolve(false);
     });
-  const next = queue.then(run, run);
-  queue = next;
-  return next;
+    socket.bind(() => {
+      socket.setBroadcast(true);
+      let pending = targets.length;
+      let sent = false;
+      for (const target of targets) {
+        socket.send(packet, WOL_PORT, target, (error) => {
+          sent ||= !error;
+          if (--pending === 0) {
+            socket.close();
+            resolve(sent);
+          }
+        });
+      }
+    });
+  });
 }
 
-const NOT_INSTALLED = "cec-client isn't installed on the Mac (brew install libcec), so I can't reach the TV.";
-const NO_ADAPTER = "I can't find the USB-CEC adapter. Check that it's plugged into the Mac mini and the TV.";
-
-type Power = "on" | "standby" | "transition" | "unknown";
-
-/** The TV's power state as cec-client reports it ("in transition from standby to on" is "transition"). */
-export function parsePower(out: string): Power {
-  const status = out.match(/power status:\s*(.+?)\s*$/im)?.[1].toLowerCase() ?? "";
-  if (status === "on") return "on";
-  if (status === "standby") return "standby";
-  if (status.startsWith("in transition")) return "transition";
-  return "unknown";
-}
-
-async function readPower(binary: string): Promise<{ power: Power; noAdapter: boolean }> {
-  const result = await cec(binary, "pow 0");
-  return { power: result.noAdapter ? "unknown" : parsePower(result.out), noAdapter: result.noAdapter };
-}
-
-async function turnOn(binary: string): Promise<TvResult> {
-  const result = await cec(binary, "on 0");
-  if (result.noAdapter) return { ok: false, message: NO_ADAPTER };
-  if (!result.ok) return { ok: false, message: "The TV didn't take that over CEC." };
-  // Switch the TV to the Mac's input too, in case it wakes up on another one.
-  await cec(binary, "as");
-  return { ok: true, message: "TV on." };
+/** Whether the TV accepts a connection on its AirPlay port. */
+function answers(ip: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    const done = (up: boolean) => {
+      socket.destroy();
+      resolve(up);
+    };
+    socket.setTimeout(PROBE_TIMEOUT_MS, () => done(false));
+    socket.once("error", () => done(false));
+    socket.connect(PROBE_PORT, ip, () => done(true));
+  });
 }
 
 // ---- the "off" hold ---------------------------------------------------------
@@ -100,38 +103,32 @@ function setHeldOff(value: boolean): void {
 
 // ---- commands ---------------------------------------------------------------
 
-/** "on" turns the TV on onto the Mac's input, "off" puts it in standby and holds it there, "status" reads it. */
+/** "on" wakes the TV and keeps it on, "off" stops keeping it on, "status" says what is going on. */
 export async function tv(action: TvAction, options: { dryRun?: boolean } = {}): Promise<TvResult> {
   const dryRun = options.dryRun ?? config.dryRun();
   if (dryRun) return { ok: true, message: `TV ${action} (dry run)` };
-  const binary = cecClientPath();
-  if (!binary) return { ok: false, message: NOT_INSTALLED };
+
+  if (action === "off") {
+    setHeldOff(true);
+    return { ok: true, message: "I'll stop turning the TV on until someone says on. Turn it off with the remote." };
+  }
 
   if (action === "status") {
-    const { power, noAdapter } = await readPower(binary);
-    if (noAdapter) return { ok: false, message: NO_ADAPTER };
-    if (power === "unknown") return { ok: false, message: "The TV didn't answer over CEC." };
-    const state = power === "on" ? "on" : power === "standby" ? "off (standby)" : "warming up";
-    const hold = heldOff() ? " It's held off until someone says on." : "";
-    return { ok: true, message: `The TV is ${state}.${hold}` };
+    const keeping = heldOff() ? "I'm leaving it off until someone says on." : "I'm keeping it on.";
+    const ip = config.tvIp();
+    if (!ip) return { ok: true, message: keeping };
+    return { ok: true, message: `${(await answers(ip)) ? "The TV is answering on the network." : "The TV isn't answering on the network."} ${keeping}` };
   }
 
-  if (action === "on") {
-    setHeldOff(false);
-    return turnOn(binary);
-  }
-
-  setHeldOff(true);
-  const result = await cec(binary, "standby 0");
-  if (result.noAdapter) return { ok: false, message: NO_ADAPTER };
-  if (!result.ok) return { ok: false, message: "The TV didn't take that over CEC." };
-  return { ok: true, message: "TV off. It stays off until someone says on." };
+  setHeldOff(false);
+  const mac = parseMac(config.tvMac());
+  if (!mac) return { ok: false, message: NO_MAC };
+  return (await wake(mac)) ? { ok: true, message: "TV on." } : { ok: false, message: "I couldn't send the wake packet to the TV." };
 }
 
 // ---- watchdog ---------------------------------------------------------------
 
 let timer: NodeJS.Timeout | null = null;
-let checking = false;
 let lastProblem = "";
 
 /** Logs a problem once, not on every tick, until it changes. */
@@ -140,29 +137,20 @@ function problem(message: string): void {
   lastProblem = message;
 }
 
-async function check(): Promise<void> {
-  if (checking || heldOff()) return;
-  checking = true;
-  try {
-    const binary = cecClientPath();
-    if (!binary) return problem(NOT_INSTALLED);
-    const { power, noAdapter } = await readPower(binary);
-    if (noAdapter) return problem(NO_ADAPTER);
-    lastProblem = "";
-    if (power !== "standby") return;
-    const result = await turnOn(binary);
-    console.log(`[tv] The TV was off. ${result.ok ? "Turned it on." : result.message}`);
-  } finally {
-    checking = false;
-  }
+async function check(mac: Buffer): Promise<void> {
+  if (heldOff()) return;
+  if (await wake(mac)) lastProblem = "";
+  else problem("Could not send the wake packet (is Local Network access allowed for node?).");
 }
 
 export function startTvWatch(): void {
   const seconds = config.tvWatchSeconds();
   if (seconds <= 0 || config.dryRun()) return;
-  void check();
-  timer = setInterval(() => void check(), seconds * 1000);
-  console.log(`[tv] Watching the TV every ${seconds}s; it is turned on when found off.`);
+  const mac = parseMac(config.tvMac());
+  if (!mac) return problem(`${NO_MAC} The TV watchdog is off.`);
+  void check(mac);
+  timer = setInterval(() => void check(mac), seconds * 1000);
+  console.log(`[tv] Waking the TV every ${seconds}s unless someone said off.`);
 }
 
 export function stopTvWatch(): void {
