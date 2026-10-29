@@ -244,7 +244,11 @@ cat <<EOF
    To re-trigger a missed prompt: tccutil reset Microphone (or AppleEvents),
    then launchctl kickstart -k gui/$UID/com.bab.screen
 
-3. Remote access over Tailscale. Tailscale SSH needs the open-source
+3. TV power (agent/tv.ts): the Mac's HDMI port has no CEC. Put a Pulse-Eight
+   USB-CEC adapter between the Mac mini and the TV, turn CEC on in the TV's
+   settings, and brew install libcec. Test: echo 'pow 0' | cec-client -s -d 1
+
+4. Remote access over Tailscale. Tailscale SSH needs the open-source
    tailscaled (brew install tailscale; sudo brew services start tailscale;
    sudo tailscale up --ssh). The App Store app can't be an SSH server; with it,
    turn on System Settings > General > Sharing > Remote Login instead and ssh

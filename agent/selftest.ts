@@ -110,6 +110,23 @@ async function main() {
     assert.equal(parseRule("why is the volume 20?"), null);
   });
 
+  await test("parseRule: tv", () => {
+    assert.deepEqual(parseRule("<@U123> on"), { kind: "tv", action: "on" });
+    assert.deepEqual(parseRule("off"), { kind: "tv", action: "off" });
+    assert.deepEqual(parseRule("Status"), { kind: "tv", action: "status" });
+    assert.deepEqual(parseRule("Jarvis, turn on the TV please"), { kind: "tv", action: "on" });
+    assert.deepEqual(parseRule("turn the tv off"), { kind: "tv", action: "off" });
+    assert.deepEqual(parseRule("is the tv on?"), { kind: "tv", action: "status" });
+  });
+
+  await test("tv: parsePower reads cec-client's answer", async () => {
+    const { parsePower } = await import("./tv");
+    assert.equal(parsePower("opening a connection to the CEC adapter...\npower status: standby\n"), "standby");
+    assert.equal(parsePower("power status: on"), "on");
+    assert.equal(parsePower("power status: in transition from standby to on"), "transition");
+    assert.equal(parsePower("autodetect FAILED"), "unknown");
+  });
+
   await test("parseRule: queue and preset", () => {
     assert.deepEqual(parseRule("queue Mr. Brightside by The Killers"), { kind: "queue", query: "Mr. Brightside by The Killers" });
     assert.deepEqual(parseRule("add Levitating to the queue"), { kind: "queue", query: "Levitating" });
