@@ -9,6 +9,8 @@ export const MULLAH_TRACKS = [
   ["Sidi Mansour", "Saber Rebai"], ["Didi", "Khaled"],
   ["Abdel Kader", "Khaled"], ["Alabina", "Alabina"],
   ["Aayshalak", "Elissa"], ["Hob Kol Hayaty", "Elissa"],
+  ["Ajmal Ihssas", "Elissa"], ["Betmoun", "Elissa"],
+  ["Aa Bali Habibi", "Elissa"],
   ["Ma Tegi Hena", "Nancy Ajram"], ["El Watar El Hassas", "Sherine"],
   ["Sabry Aalil", "Sherine"], ["Nassam Alayna El Hawa", "Fairuz"],
   ["Ana Wel Shouq", "Assi El Hallani"], ["Albi Eshkha", "Ragheb Alama"],

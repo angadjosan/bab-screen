@@ -98,7 +98,7 @@ Set `SLACK_SONGS_REPLY=1` to have the bot answer in the request's thread ("Queue
 
 ## /mullah — Arabic mix
 
-Type `/mullah` in Slack to start a shuffled, curated 40-song Arabic mix on the connected Spotify account's active device. Includes Tamally Maak, C'est la vie, Nour El Ein, Ah W Noss, and Lebanese, Egyptian and North African favorites, alongside mellow songs, traditional classics, and electronic/disco club tracks. Each invocation resolves available tracks from Spotify; unavailable songs are skipped. It starts playback immediately instead of adding songs to the end of the queue. Spotify may still retain manually queued songs. Edit `lib/mullah.ts` to change the selection.
+Type `/mullah` in Slack to start a shuffled, curated 43-song Arabic mix on the connected Spotify account's active device. Includes Tamally Maak, C'est la vie, Nour El Ein, Ah W Noss, and Lebanese, Egyptian and North African favorites, alongside mellow songs, traditional classics, and electronic/disco club tracks. Each invocation resolves available tracks from Spotify; unavailable songs are skipped. It starts playback immediately instead of adding songs to the end of the queue. Spotify may still retain manually queued songs. Edit `lib/mullah.ts` to change the selection.
 
 One-time Slack setup (in the existing app at https://api.slack.com/apps):
 
