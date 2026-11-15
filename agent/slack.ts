@@ -8,6 +8,7 @@ import { FOCUS_MUSIC_ACTION, FOCUS_MUSIC_CHOICES, chooseFocusMusic, looksLikeCom
 import { looksLikeJamTrigger } from "../lib/jam";
 import { resolveUserName } from "../lib/slack-users";
 import { findTrackLinks } from "../lib/spotify";
+import { playMullahMix } from "./music";
 import { config } from "./config";
 import { upsertMember } from "./db";
 import { slackText } from "./threads";
@@ -125,6 +126,17 @@ export async function startSlack(): Promise<boolean> {
   }
 
   app = new App({ token: botToken, appToken, socketMode: true, logLevel: LogLevel.WARN });
+
+  app.command("/mullah", async ({ ack, respond }) => {
+    await ack({ response_type: "ephemeral", text: "Starting the Arabic mix… 🎶" });
+    try {
+      const result = await playMullahMix();
+      await respond({ response_type: "ephemeral", text: result.message });
+    } catch (error) {
+      console.error("[jarvis] /mullah failed:", error);
+      await respond({ response_type: "ephemeral", text: "Couldn't start the mix. Try again in a moment." });
+    }
+  });
 
   app.event("app_mention", async ({ event }) => {
     await handleRequest(event as { user?: string; text?: string; channel: string; ts: string; thread_ts?: string }, "channel");

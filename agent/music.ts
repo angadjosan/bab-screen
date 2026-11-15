@@ -109,10 +109,10 @@ function spotifyProblem(code: string): string {
 
 const SPOTIFY_TIMEOUT_MS = 15_000;
 
-type SpotifyAnswer = { ok: boolean; error?: string; link?: boolean; track?: Track | null };
+type SpotifyAnswer = { ok: boolean; error?: string; link?: boolean; track?: Track | null; count?: number };
 
 /** POST /api/spotify/agent on the Next app. Never throws; failures come back as {ok: false, error: code}. */
-export async function spotifyViaNext(body: { op: "search"; query: string } | { op: "queue"; trackId: string }): Promise<SpotifyAnswer> {
+export async function spotifyViaNext(body: { op: "search"; query: string } | { op: "queue"; trackId: string } | { op: "mullah" }): Promise<SpotifyAnswer> {
   const secret = config.screenSecret();
   if (!secret) return { ok: false, error: "no_secret" };
   try {
@@ -120,7 +120,7 @@ export async function spotifyViaNext(body: { op: "search"; query: string } | { o
       method: "POST",
       headers: { "Content-Type": "application/json", "x-screen-secret": secret },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(SPOTIFY_TIMEOUT_MS),
+      signal: AbortSignal.timeout(body.op === "mullah" ? 120_000 : SPOTIFY_TIMEOUT_MS),
     });
     const answer = (await response.json().catch(() => null)) as SpotifyAnswer | null;
     if (!answer || typeof answer !== "object") return { ok: false, error: `http_${response.status}` };
@@ -143,4 +143,16 @@ export async function queueTrack(query: string, options: { dryRun?: boolean } = 
   const queued = await spotifyViaNext({ op: "queue", trackId: track.id });
   if (!queued.ok) return { ok: false, message: spotifyProblem(queued.error ?? "unknown") };
   return { ok: true, message: `Queued: ${describe(track)}`, detail: track };
+}
+
+/** A slash command starts playback, rather than appending songs behind the existing queue. */
+export async function playMullahMix(): Promise<MusicResult> {
+  if (config.dryRun()) return { ok: true, message: "Would start the Arabic mix (dry run)." };
+  const answer = await spotifyViaNext({ op: "mullah" });
+  if (!answer.ok) {
+    if (answer.error === "no_active_device") return { ok: false, message: "Open Spotify on the screen Mac and play something once, then try /mullah again." };
+    if (answer.error === "mix_empty") return { ok: false, message: "Couldn't find the mix's tracks on Spotify. Try again later." };
+    return { ok: false, message: spotifyProblem(answer.error ?? "unknown").replace("queueing needs", "playback needs") };
+  }
+  return { ok: true, message: `Playing the Arabic mix — ${answer.count} tracks, with Amr Diab, Khaled, Nancy Ajram, Elissa and more. 🎶` };
 }

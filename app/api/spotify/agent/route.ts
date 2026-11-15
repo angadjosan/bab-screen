@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { startMullahMix } from "../../../../lib/mullah";
 import { agentRequestProblem } from "../../../../lib/agent-auth";
 import { SpotifyError, addToQueue, expandShortLink, findTrackLinks, getTrack, searchTracks, type Track } from "../../../../lib/spotify";
 
@@ -45,7 +46,7 @@ async function queue(body: AgentBody) {
   return reply({ ok: true });
 }
 
-const OPS: Record<string, (body: AgentBody) => Promise<NextResponse>> = { search, queue };
+const OPS: Record<string, (body: AgentBody) => Promise<NextResponse>> = { search, queue, mullah: async () => reply({ ok: true, ...(await startMullahMix()) }) };
 
 // From the Jarvis agent's queue_track (agent/music.ts): {"op": "search", "query": "<artist and title, or a
 // track link>"} answers {ok, track} (track null when nothing matches); {"op": "queue", "trackId": "<22 chars>"}
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
   const body = parseBody(await request.text());
   if (body instanceof NextResponse) return body;
   const op = typeof body.op === "string" && Object.hasOwn(OPS, body.op) ? OPS[body.op] : null;
-  if (!op) return refuse(400, "op must be search or queue");
+  if (!op) return refuse(400, "op must be search, queue or mullah");
   try {
     return await op(body);
   } catch (error) {
