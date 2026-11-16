@@ -33,6 +33,7 @@ export const QUEUE_SCOPES = ["user-modify-playback-state"];
 export const DEFAULT_REDIRECT_URI = "http://127.0.0.1:3000/api/spotify/callback";
 
 export type SpotifyErrorCode =
+  | "mix_empty"
   | "not_configured"
   | "not_connected"
   /** The stored login no longer works (revoked / app secret changed): log in again. */
@@ -244,7 +245,7 @@ async function accessToken(forceRefresh = false): Promise<string> {
 type ApiError = { error?: { status?: number; message?: string; reason?: string } };
 
 async function api<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   params: Record<string, string> = {},
   body?: unknown,
@@ -266,7 +267,7 @@ async function api<T>(
   throw await responseError(response);
 }
 
-async function sendWithFreshToken(url: URL, method: "GET" | "POST", body: unknown): Promise<Response> {
+async function sendWithFreshToken(url: URL, method: "GET" | "POST" | "PUT", body: unknown): Promise<Response> {
   let response: Response | undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     // Second pass only happens after a 401: the stored access token was stale, so force a refresh.
@@ -278,7 +279,7 @@ async function sendWithFreshToken(url: URL, method: "GET" | "POST", body: unknow
   return response;
 }
 
-async function sendApiRequest(url: URL, method: "GET" | "POST", token: string, body: unknown): Promise<Response> {
+async function sendApiRequest(url: URL, method: "GET" | "POST" | "PUT", token: string, body: unknown): Promise<Response> {
   try {
     return await fetch(url, {
       method,
@@ -527,4 +528,12 @@ export async function expandShortLink(shortLink: string): Promise<string | null>
     if (url.hostname === "open.spotify.com") return url.toString().match(TRACK_URL)?.[1] ?? null;
   }
   return null;
+}
+
+/** Starts a complete mix immediately on the connected account's active device. */
+export async function playTracks(trackIds: string[]): Promise<void> {
+  if (!trackIds.length || trackIds.length > 100 || trackIds.some((id) => !/^[A-Za-z0-9]{22}$/.test(id))) {
+    throw new Error("Expected 1–100 Spotify track IDs");
+  }
+  await api<unknown>("PUT", "/me/player/play", {}, { uris: trackIds.map((id) => `spotify:track:${id}`) });
 }

@@ -96,6 +96,19 @@ Spotify has no public API for Jams. A small local Spicetify extension uses Spoti
 
 Set `SLACK_SONGS_REPLY=1` to have the bot answer in the request's thread ("Queued: ..."); it is off by default. `SONGS_MAX_AGE_MINUTES` and `SONGS_POLL_SECONDS` (0 turns the poll off) are optional.
 
+## /mullah — Arabic mix
+
+Type `/mullah` in Slack to start a shuffled, curated 47-song Arabic mix on the connected Spotify account's active device. Includes Tamally Maak, C'est la vie, Nour El Ein, Ah W Noss, and Lebanese, Egyptian and North African favorites, alongside mellow songs, traditional classics, and electronic/disco club tracks. Each invocation resolves available tracks from Spotify; unavailable songs are skipped. It starts playback immediately instead of adding songs to the end of the queue. Spotify may still retain manually queued songs. Edit `lib/mullah.ts` to change the selection.
+
+One-time Slack setup (in the existing app at https://api.slack.com/apps):
+
+1. Under **Slash Commands**, create `/mullah` with description `Play an Arabic favorites mix`. Socket Mode needs no Request URL.
+2. Ensure the bot has the `commands` OAuth scope; reinstall the app to the workspace if Slack prompts for updated permissions.
+3. Deploy/restart both the Next app and Jarvis listener. The existing `SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN`, `SCREEN_SECRET`, and Spotify connection are required.
+4. Open Spotify on the screen Mac and start playback once to make it the active device, then type `/mullah`. Spotify Premium is required for Web API playback. Errors and confirmation are private to the person invoking the command. `JARVIS_DRY_RUN=1` does not play music.
+
+The listener acknowledges immediately, then calls the protected `/api/spotify/agent` operation `mullah`. The Next process remains the sole Spotify token owner. No public HTTP endpoint or LLM call is needed. Slack registration is separate from deploying the code; an unregistered command will not reach the listener.
+
 ## Bot commands
 
 Mention the Slack bot in the songs channel with one of these words. The person who said it gets a private answer ("Volume 20 (it was 45).").
@@ -321,6 +334,7 @@ The agent's `queue_track` (and "queue X" on the rules fast path) does not call S
 | --- | --- | --- |
 | `search` | `query` (artist and title, or a Spotify track link; up to 200 characters) | `{ok: true, link, track: {id, name, artists} \| null}` |
 | `queue` | `trackId` (22-character Spotify track ID) | `{ok: true}` |
+| `mullah` | none | `{ok: true, count}`; starts the shuffled Arabic mix |
 
 A Spotify failure answers 200 with `{ok: false, error: "<code>"}` (`not_connected`, `no_active_device`, `premium_required`, `rate_limited`, ...), which the agent turns into a sentence. With `JARVIS_DRY_RUN=1` the agent still searches through the route when `SPOTIFY_CLIENT_ID` is set, but never queues; without it, it searches nothing. Playback (play, pause, skip, volume) stays in the agent, through the Spotify app's AppleScript on this Mac.
 
